@@ -149,3 +149,19 @@ class SourcePackageTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class EmbeddedXdbRuntimeTest(unittest.TestCase):
+    def test_macos_accepts_abi_versioned_sonames(self):
+        for library in ('libxdb_client.dylib', 'libxdb_client.1.dylib', 'libxdb_client.1.0.0.dylib'):
+            self.assertTrue(module.embedded_xdb_runtime({'source_dependency': 'xdb', 'library': library}, 'macos'), library)
+
+    def test_macos_rejects_other_libraries_and_owners(self):
+        self.assertFalse(module.embedded_xdb_runtime({'source_dependency': 'xdb', 'library': 'libxdb_client.1.dylib.bak'}, 'macos'))
+        self.assertFalse(module.embedded_xdb_runtime({'source_dependency': 'other', 'library': 'libxdb_client.1.dylib'}, 'macos'))
+        self.assertFalse(module.embedded_xdb_runtime({'source_dependency': 'xdb', 'library': 'libSDL2.dylib'}, 'macos'))
+
+    def test_windows_accepts_known_client_names(self):
+        for library in ('xdb_client.dll', 'libxdb_client.dll', 'XDB_CLIENT.DLL'):
+            self.assertTrue(module.embedded_xdb_runtime({'source_dependency': 'xdb', 'library': library}, 'windows'), library)
+        self.assertFalse(module.embedded_xdb_runtime({'source_dependency': 'xdb', 'library': 'libxdb_client.1.dll'}, 'windows'))

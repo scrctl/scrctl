@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tarfile
@@ -14,6 +15,17 @@ def sha256(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def embedded_xdb_runtime(dependency, platform):
+    """xdb 客户端库随包分发：macOS 安装名带 ABI 版本号（libxdb_client[.N]*.dylib），
+    Windows 为固定文件名。"""
+    if dependency.get('source_dependency') != 'xdb':
+        return False
+    library = dependency['library']
+    if platform == 'macos':
+        return bool(re.fullmatch(r'libxdb_client(?:\.\d+)*\.dylib', library))
+    return library.casefold() in {'xdb_client.dll', 'libxdb_client.dll'}
 
 
 def verify_record(record, root):
@@ -78,8 +90,7 @@ def package(install, build, materials, platform, repository):
             raise RuntimeError(f'Missing completed source collector: {directory}')
     for dependency in metadata['runtime_dependencies']:
         owner = dependency.get('homebrew_package') if platform == 'macos' else dependency.get('msys2_package')
-        embedded_runtime = (dependency.get('source_dependency') == 'xdb' and
-                            dependency['library'].casefold() in ({'libxdb_client.dylib'} if platform == 'macos' else {'xdb_client.dll', 'libxdb_client.dll'}))
+        embedded_runtime = embedded_xdb_runtime(dependency, platform)
         if not owner and not embedded_runtime:
             raise RuntimeError(f'Uncovered runtime library: {dependency["library"]}')
         library = install / ('bin/lib' if platform == 'macos' else 'bin') / dependency['library']
