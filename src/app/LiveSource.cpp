@@ -4,6 +4,7 @@
 #include <SDL.h>
 #include <cstdio>
 #include <filesystem>
+#include <utility>
 
 namespace scrctl::app {
 using Json = xdb::client::Json;
@@ -203,7 +204,8 @@ void LiveSource::receive(std::stop_token stop) {
                                screenshot};
         {
             std::lock_guard lock(mutex_);
-            latest_ = std::move(frame);
+            // 旧帧交给局部变量，在解锁后释放其像素缓冲区。
+            std::swap(latest_, frame);
             latest_geometry_ = geometry;
             ++serial_;
         }
@@ -216,7 +218,8 @@ bool LiveSource::next(scrctl::Frame &frame, int timeout) {
                          [this] { return serial_ > delivered_ || ended_.load(); }) ||
         serial_ == delivered_)
         return false;
-    frame = latest_;
+    // 只交换所有权；调用方旧帧留在单槽中，等待下一次发布时在锁外释放。
+    std::swap(frame, latest_);
     delivered_geometry_ = latest_geometry_;
     delivered_ = serial_;
     return true;
