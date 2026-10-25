@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    uses: ./.github/workflows/offline-selftest.yml
+  notarize:
+    uses: ./.github/workflows/macos-notarize.yml
+    secrets: inherit
+  publish:
+    needs: [verify, notarize]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: scrctl-*
+          path: artifacts
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir packages
+          cp artifacts/scrctl-macos-notarized/scrctl-macos-*-notarized.zip packages/
+          cp artifacts/scrctl-macos-notarized/scrctl-sources-macos.tar packages/
+          for arch in arm64 x64; do
+            (cd "artifacts/scrctl-windows-$arch" && zip -qr "$GITHUB_WORKSPACE/packages/scrctl-windows-$arch.zip" .)
+            cp "artifacts/scrctl-sources-windows-$arch/scrctl-sources-windows.tar" "packages/scrctl-sources-windows-$arch.tar"
+          done
+          (cd packages && sha256sum * > SHA256SUMS.txt)
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --draft --title "$TAG" --notes-file CHANGELOG.md
+          fi
+          gh release upload "$TAG" packages/* --clobber
+          gh release edit "$TAG" --draft=false --latest

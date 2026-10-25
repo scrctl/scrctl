@@ -31,7 +31,7 @@ scrctl 原有 `--pair`、`--install-ddi`、`--download-ddi`、`--list-devices`�
 
 正式版：[v1.0.0](https://github.com/scrctl/scrctl/releases/tag/v1.0.0)。
 提供 macOS ARM64、Windows ARM64 和 Windows x64 安装包；Linux 请按下方说明从源码构建。
-旧版发布包不代表当前 XDB 架构的交付内容。当前源码构建的 scrctl 需另外安装
+scrctl 需要另外安装
 [XDeviceBridge 运行包](https://github.com/scrctl/XDeviceBridge)，将 `xdb` 放入 `PATH`
 或设置 `XDB_EXECUTABLE`；scrctl 安装目录仅附带客户端库，不捆绑 Server。
 解压后运行 `bin/scrctl --help`；Windows 的 USB 驱动要求见 [安装说明](docs/WINDOWS.md)。
