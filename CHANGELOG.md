@@ -1,30 +1,38 @@
-# 更新记录
+# Changelog
+
+[English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
 ## 1.0.0 — 2026-10-25
 
-首个正式版。设备协议和媒体处理由独立的 XDeviceBridge 1.0 Server 提供，
-scrctl 负责桌面窗口、输入转发与音频播放。运行前需另行安装 `xdb`。
+First stable release. The separate XDeviceBridge 1.0 server handles device
+protocols and media processing; scrctl provides the desktop window, input
+forwarding and audio playback. Install `xdb` separately before use.
 
-- USB / Wi-Fi 镜像与控制、mDNS 设备发现、设备选择和无线 PIN 配对。
-- 无线重新配对可在验证新记录后替换同设备的旧记录。
-- DDI 按需下载、原生安装与状态检查。
-- 电脑音频播放、双端播放、禁用音频和可配置缓冲。
-- 键盘、显式剪贴板粘贴、鼠标触摸、设备按键、方向控制和显示暂停。
-- MP4 / MKV 音视频录制及裸 HEVC 保存；保留原始编码流，不重编码。
-- 启动取消、超时处理、中英文消息与跨平台构建。
-- macOS ARM64、Windows ARM64 / x64 运行包及对应依赖源码、构建配方和补丁。
+- USB / Wi-Fi mirroring and control, mDNS discovery, device selection and wireless PIN pairing.
+- Wireless re-pairing can replace a device's old record after validating the new one.
+- On-demand DDI download, native installation and status checks.
+- Computer audio, duplicate playback, disabled audio and configurable buffering.
+- Keyboard, explicit clipboard paste, mouse touch, device buttons, rotation and display pause.
+- MP4 / MKV A/V recording and raw HEVC output, preserving original encoded streams without re-encoding.
+- Startup cancellation, timeouts, English/Chinese messages and cross-platform builds.
+- macOS ARM64 and Windows ARM64 / x64 runtime packages with corresponding dependency sources, recipes and patches.
 
-### 使用边界
+### Scope and limitations
 
-- 主要实时媒体真机记录来自 iPhone 13 mini / iOS 27；iPad mini 5 /
-  iPadOS 18.7.8 已验证截图轮询和控制，设备拒绝实时视频与音频。
-- Windows x64 已通过构建、离线测试与安装包检查，尚无 x64 真机连接验收。
-  Linux 的 Debian ARM64 真机记录已有验证，当前仅提供源码构建。
-- 中文等 Unicode 文本使用显式剪贴板粘贴，可能触发 iOS 粘贴授权；
-  普通输入传递键盘事件，不将输入法文本自动转为粘贴。
-- 录制使用开始时的方向元数据；后续转屏保留设备原始编码画布，不自动旋正或补黑边。
-- 切换音频路由可能让播放器暂停一次，需要恢复播放。
-- macOS 正式包使用 Developer ID 签名，并在 Apple 公证 Accepted 后发布。
-- 新增内嵌窗口图标；实时帧交接避免锁内整帧复制。
+- Primary live-media device records are from an iPhone 13 mini on iOS 27. An
+  iPad mini 5 on iPadOS 18.7.8 supported screenshot polling and control, but rejected
+  live video and audio.
+- Windows x64 passed builds, offline tests and package checks; x64 device
+  connections have not been accepted on hardware. Debian ARM64 device testing is
+  recorded; this release provides no standalone Linux runtime archive.
+- Unicode text uses explicit clipboard paste, which can trigger iOS permission.
+  Ordinary input forwards keyboard events rather than automatically pasting IME text.
+- Recording uses fixed initial orientation metadata. Later rotation retains the
+  original encoded canvas without automatic pixel rotation or black borders.
+- Changing audio routes can pause the player once; resume playback if needed.
+- macOS release packages are Developer ID signed and published after Apple
+  notarization returns Accepted.
+- Embedded window icon and frame handoff without a full-frame copy under the lock.
 
-完整的机型、系统与平台验证范围见 [README](README.md)。
+See the [README](README.md) and linked original records for device, system and
+platform validation boundaries.
