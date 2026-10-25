@@ -175,8 +175,7 @@ void LiveSource::receive(std::stop_token stop) {
                              : frames_.request("video.frame", {{"since", video_serial}, {"timeout_ms", 50}},
                                                response, error);
         if (!ok) {
-            if (error.find("socket") != std::string::npos || response.code == "not_connected" ||
-                response.code == "transport_error") {
+            if (response.code == "not_connected" || response.code == "transport_error") {
                 if (!stop.stop_requested())
                     fail(error);
                 return;

@@ -36,4 +36,33 @@ with FakeServer() as server:
     assert any(name == 'video.start' and p['decode'] is False for name,p in server.calls)
     assert 'media.finish' in server.methods()
     assert not {'pair', 'ddi.prepare'} & set(server.methods())
-print('PASS: scrctl BGRA/PNG, ASCII, explicit clipboard, PCM attachment and encoded recording routing')
+
+class FrameFailureServer(FakeServer):
+    def __init__(self, disconnect):
+        self.disconnect = disconnect
+        self.frame_requests = 0
+        super().__init__()
+
+    def handle_call(self, name, params):
+        result = super().handle_call(name, params)
+        if name == 'video.frame':
+            self.frame_requests += 1
+            if self.frame_requests == 2:
+                if self.disconnect:
+                    # The C++ client must classify EOF without inspecting its message.
+                    raise ConnectionResetError('test peer disconnect')
+                raise ValueError('temporary socket capture error')
+        return result
+
+
+for disconnect in (False, True):
+    with FrameFailureServer(disconnect) as server:
+        env = {**os.environ, **server.environment, 'SDL_VIDEODRIVER': 'dummy',
+               'SDL_AUDIODRIVER': 'dummy', 'SDL_RENDER_DRIVER': 'software'}
+        result = subprocess.run(
+            [exe, '--lang', 'en', '-s', 'mock-iphone', '--no-window', '--no-audio',
+             '--exit-after', '3'], env=env, capture_output=True, text=True, timeout=8)
+        assert result.returncode == (1 if disconnect else 0), (result.stdout, result.stderr)
+        assert server.frame_requests == 2 if disconnect else server.frame_requests >= 4
+
+print('PASS: scrctl BGRA/PNG, ASCII, explicit clipboard, PCM, recording and coded frame failures')
