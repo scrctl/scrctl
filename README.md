@@ -24,7 +24,7 @@ from the Developer ID notarized macOS release ZIP.
 
 ### Release packages
 
-Download [scrctl 1.0.0](https://github.com/scrctl/scrctl/releases/tag/v1.0.0)
+Download [scrctl 1.0.1](https://github.com/scrctl/scrctl/releases/tag/v1.0.1)
 and the matching [XDeviceBridge runtime](https://github.com/scrctl/XDeviceBridge/releases).
 
 - scrctl packages: macOS ARM64, Windows ARM64 and Windows x64.

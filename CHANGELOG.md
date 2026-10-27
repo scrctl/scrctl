@@ -2,6 +2,18 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.0.1 — 2026-10-27
+
+- Update the embedded XDeviceBridge client to 1.1.0. Upgrade and restart the
+  separate `xdb` Server to use native continuous discovery and DDI improvements;
+  existing pairing records are retained.
+- Preserve explicit empty clipboard writes (`--copy ""`) with newer CLI11 versions.
+- Provide English and Chinese user documentation as separate, linked pages.
+- Fix Windows ARM64 CI setup by disabling its optional MSYS2 package cache.
+
+Offline checks include all four macOS client/Server 1.0.0 and 1.1.0 combinations.
+This update does not add new live-device or OS-version acceptance claims.
+
 ## 1.0.0 — 2026-10-25
 
 First stable release. The separate XDeviceBridge 1.0 server handles device

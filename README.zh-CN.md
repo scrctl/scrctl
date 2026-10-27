@@ -22,7 +22,7 @@ Tap 的 bottle 与正式发布页中经 Developer ID 签名、公证的 macOS ZI
 
 ### 正式发布包
 
-下载 [scrctl 1.0.0](https://github.com/scrctl/scrctl/releases/tag/v1.0.0)
+下载 [scrctl 1.0.1](https://github.com/scrctl/scrctl/releases/tag/v1.0.1)
 和对应平台的 [XDeviceBridge 运行包](https://github.com/scrctl/XDeviceBridge/releases)。
 
 - scrctl 提供 macOS ARM64、Windows ARM64 和 Windows x64 包。
