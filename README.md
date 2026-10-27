@@ -127,8 +127,10 @@ ctest --test-dir build --output-on-failure
 ./build/scrctl --help
 ```
 
-Building scrctl builds only the XDB client library. Install the `xdb` server
-separately. See the [build guide](docs/USER_GUIDE.md#build-from-source) for Linux,
+Building scrctl builds only the pinned XDB 1.1.0 client library. Install the `xdb`
+server separately; upgrade it to 1.1.0 and restart it to use native discovery
+subscriptions and the DDI improvements. Existing pairing records are retained.
+See the [build guide](docs/USER_GUIDE.md#build-from-source) for Linux,
 Windows and offline dependency options.
 
 ## License

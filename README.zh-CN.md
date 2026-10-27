@@ -116,7 +116,9 @@ ctest --test-dir build --output-on-failure
 ./build/scrctl --help
 ```
 
-scrctl 只构建 XDB 客户端库，Server 需要单独安装。Linux、Windows 及离线依赖设置见
+scrctl 只构建固定版本的 XDB 1.1.0 客户端库，Server 需要单独安装。
+将 Server 升级到 1.1.0 并重启后，才能使用原生持续发现和 DDI 改进；现有配对记录会保留。
+Linux、Windows 及离线依赖设置见
 [构建指南](docs/USER_GUIDE.zh-CN.md#从源码构建)。
 
 ## 许可
