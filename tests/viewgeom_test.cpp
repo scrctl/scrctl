@@ -37,8 +37,6 @@ void test_raw_to_fraction() {
     // 实测右下角
     display_fraction_from_logical(1121, 2431, c, fx, fy);
     check(near(fx, 0.996, 0.002) && near(fy, 0.998, 0.002), "右下角 (1121,2431) -> (0.996,0.998)");
-    // 回归：这里曾经多除一次"窗口点数/绘制面像素"，右下角被算成 (2.456, 2.461)
-    check(fx < 1.05 && fy < 1.05, "不再被放大 2.46 倍");
 
     // 实测左上角附近
     display_fraction_from_logical(9, 15, c, fx, fy);
@@ -61,7 +59,6 @@ void test_ctu_padding_not_in_the_denominator() {
     double fx = 0, fy = 0;
     display_fraction_from_logical(1124, 2435, c, fx, fy);
     check(fx > 0.99 && fy > 0.99, "右下角不被 CTU 填充吃掉");
-    check(near(1124.0 / 1136, 0.989, 0.002), "反证：拿 1136 当分母就只有 0.989");
 }
 
 /// 裁了显示区的一块：视口正中应落在整块屏幕的偏上位置，而不是 0.5。
