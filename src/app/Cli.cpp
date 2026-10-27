@@ -81,7 +81,8 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
         ->check(CLI::IsMember(button_codes));
     app.add_option("--test-type", o.test_type, SCRCTL_N_("Inject ASCII text (device text field must have focus)"));
     app.add_option("--test-degrade", o.test_degrade, SCRCTL_N_("Force alternating video fallback and recovery at T1,T2,... seconds"));
-    app.add_option("--copy", o.copy_text, SCRCTL_N_("Write device clipboard and exit (supports Unicode)"));
+    std::string copy_text;
+    app.add_option("--copy", copy_text, SCRCTL_N_("Write device clipboard and exit (supports Unicode)"));
     app.add_flag("--list-devices", o.list_devices,
                  SCRCTL_N_("List USB and RemotePairing devices; wireless scan defaults to 3 seconds"));
     app.add_flag("--download-ddi", o.download_ddi,
@@ -193,6 +194,7 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
     i18n::CliLanguage language(app);
     try {
         app.parse(argc, argv);
+        if (app.count("--copy")) o.copy_text = copy_text;
         if (!language.select()) return ParseResult::Error;
         if (app.count("--wifi") && std::all_of(o.wifi.begin(), o.wifi.end(), [](unsigned char c) {
             return std::isspace(c);
