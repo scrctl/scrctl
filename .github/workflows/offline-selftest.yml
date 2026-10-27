@@ -157,6 +157,8 @@ jobs:
         with:
           msystem: ${{ matrix.msystem }}
           update: true
+          # ARM64 的 paccache 清理曾在编译前退出 127；禁用这项可选缓存。
+          cache: ${{ matrix.arch != 'arm64' }}
           install: >-
             git
             pacman-contrib
