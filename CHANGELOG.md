@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- Negotiate shared control for ordinary mirrors when supported by xdb Server.
+  Independent windows share one video producer and can both control the device;
+  closing one does not finalize another's media. Recording remains exclusive,
+  audio has one consuming window, and older Servers retain legacy behavior.
+
 ## 1.0.1 — 2026-10-27
 
 - Update the embedded XDeviceBridge client to 1.1.0. Upgrade and restart the

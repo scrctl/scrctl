@@ -60,6 +60,17 @@ If discovery is blocked, use `--wifi <address>` and, if needed, `--wifi-port`.
 A manually specified address still requires a valid pairing record.
 xdb starts on demand and listens on loopback only.
 
+## Shared mirror windows (development builds)
+
+With a Server advertising `shared_control_sessions`, ordinary mirrors
+(without `--record`) automatically share one video producer. Open scrctl twice
+for the same device: both windows can control it, and closing one preserves the
+other. The single touch contact is serialized between windows; keyboard/button
+holds are tracked per window. Video decoding options must match. Audio plays
+through one window; the other continues with video/control. Closing the audio
+window does not automatically move sound to the other. Recording remains
+exclusive. Older Servers retain their original exclusive behavior.
+
 ## Common operations
 
 ```sh
@@ -127,7 +138,7 @@ ctest --test-dir build --output-on-failure
 ./build/scrctl --help
 ```
 
-Building scrctl builds only the pinned XDB 1.1.0 client library. Install the `xdb`
+Building scrctl builds only the pinned XDB client library. Install the `xdb`
 server separately; upgrade it to 1.1.0 and restart it to use native discovery
 subscriptions and the DDI improvements. Existing pairing records are retained.
 See the [build guide](docs/USER_GUIDE.md#build-from-source) for Linux,

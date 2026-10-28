@@ -43,11 +43,20 @@ bool LiveSource::start(const Options &options, std::string &error) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     });
-    Response opened;
-    if (!control_.request("connection.open",
-                          {{"udid", options.serial}, {"wifi", options.wifi}, {"port", options.wifi_port}},
-                          opened, error))
+    Response info;
+    if (!control_.request("server.info", Json::object(), info, error))
         return false;
+    shared_control_ = options.record_path.empty() && want_video_ && decode_video_ &&
+        info.value.value("capabilities", Json::object()).value("shared_control_sessions", false);
+    Json connection{{"udid", options.serial}, {"wifi", options.wifi}, {"port", options.wifi_port}};
+    if (shared_control_) connection["access"] = "shared";
+    Response opened;
+    if (!control_.request("connection.open", connection, opened, error))
+        return false;
+    if (shared_control_ && opened.value.value("access", std::string()) != "shared") {
+        error = "xdb Server did not confirm shared control access";
+        return false;
+    }
     attachment_ = opened.value.at("attachment").get<std::string>();
     auto container = record_container_format(options.record_path, options.record_format);
     if (container) {
@@ -246,7 +255,8 @@ bool LiveSource::finish_recording(std::string &error) {
         audio_out_.close();
         audio_.reset();
         if (control_.connected()) {
-            finish_ok_ = control_.request("media.finish", Json::object(), finish_error_);
+            if (!shared_control_)
+                finish_ok_ = control_.request("media.finish", Json::object(), finish_error_);
             std::string ignored;
             control_.request("connection.close", Json::object(), ignored);
             control_.close();

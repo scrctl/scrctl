@@ -37,6 +37,20 @@ with FakeServer() as server:
     assert 'media.finish' in server.methods()
     assert not {'pair', 'ddi.prepare'} & set(server.methods())
 
+    # A capable Server shares ordinary mirrors. Closing one must not issue the
+    # legacy process-wide media.finish; recording still requests exclusivity.
+    server.shared_control = True
+    start = len(server.calls)
+    run('-s', 'mock-iphone', '--no-window', '--no-audio', '--exit-after', '2')
+    shared_calls = server.calls[start:]
+    assert any(name == 'connection.open' and p.get('access') == 'shared' for name, p in shared_calls)
+    assert not any(name == 'media.finish' for name, _ in shared_calls)
+    assert any(name == 'connection.close' for name, _ in shared_calls)
+    start = len(server.calls)
+    run('-s', 'mock-iphone', '--no-window', '--no-playback', '--record', str(root/'build-xdb/mock-recording.mkv'), '--time-limit', '1')
+    assert any(name == 'connection.open' and 'access' not in p for name, p in server.calls[start:])
+    assert any(name == 'media.finish' for name, _ in server.calls[start:])
+
 class FrameFailureServer(FakeServer):
     def __init__(self, disconnect):
         self.disconnect = disconnect

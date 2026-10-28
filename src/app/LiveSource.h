@@ -71,6 +71,7 @@ class LiveSource final : public FrameSource {
     AudioOut audio_out_;
     bool audio_enabled_ = false, want_video_ = true, decode_video_ = true, finished_recording_ = false;
     bool finish_ok_ = true;
+    bool shared_control_ = false;
     std::string finish_error_;
     std::jthread receiver_;
     mutable std::mutex mutex_;

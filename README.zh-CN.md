@@ -55,6 +55,14 @@ scrctl -s '<UDID>' --wifi auto
 发现受阻时可以指定 `--wifi <地址>`，必要时用 `--wifi-port` 指定端口。
 手动地址仍需要有效的配对记录。xdb 按需启动，只监听本机回环地址。
 
+## 共享镜像窗口（开发版）
+
+Server 支持 `shared_control_sessions` 时，普通镜像（不带 `--record`）自动共享一个视频
+生产者。对同一设备启动两次 scrctl，两个窗口都能控制手机，关闭一个不影响另一个。
+手机的单触点不能同时被两边拖动，键盘／按钮的按住状态按窗口分别跟踪。
+视频解码参数须一致。音频由一个窗口播放，另一窗口继续提供视频和控制；关闭音频窗口
+不会自动将声音转移到另一个窗口。录制保持独占；旧 Server 保留原有独占行为。
+
 ## 常用操作
 
 ```sh
@@ -116,7 +124,7 @@ ctest --test-dir build --output-on-failure
 ./build/scrctl --help
 ```
 
-scrctl 只构建固定版本的 XDB 1.1.0 客户端库，Server 需要单独安装。
+scrctl 只构建固定版本的 XDB 客户端库，Server 需要单独安装。
 将 Server 升级到 1.1.0 并重启后，才能使用原生持续发现和 DDI 改进；现有配对记录会保留。
 Linux、Windows 及离线依赖设置见
 [构建指南](docs/USER_GUIDE.zh-CN.md#从源码构建)。
