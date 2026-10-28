@@ -24,7 +24,7 @@ from the Developer ID notarized macOS release ZIP.
 
 ### Release packages
 
-Download [scrctl 1.0.1](https://github.com/scrctl/scrctl/releases/tag/v1.0.1)
+Download [scrctl 1.1.0](https://github.com/scrctl/scrctl/releases/tag/v1.1.0)
 and the matching [XDeviceBridge runtime](https://github.com/scrctl/XDeviceBridge/releases).
 
 - scrctl packages: macOS ARM64, Windows ARM64 and Windows x64.
@@ -60,10 +60,10 @@ If discovery is blocked, use `--wifi <address>` and, if needed, `--wifi-port`.
 A manually specified address still requires a valid pairing record.
 xdb starts on demand and listens on loopback only.
 
-## Shared mirror windows (development builds)
+## Shared mirror windows
 
-With a Server advertising `shared_control_sessions`, ordinary mirrors
-(without `--record`) automatically share one video producer. Open scrctl twice
+With xdb Server 1.3.0 or later advertising `shared_control_sessions`, ordinary
+mirrors (without `--record`) automatically share one video producer. Open scrctl twice
 for the same device: both windows can control it, and closing one preserves the
 other. The single touch contact is serialized between windows; keyboard/button
 holds are tracked per window. Video decoding options must match. Audio plays
