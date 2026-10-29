@@ -72,7 +72,10 @@ window does not automatically move sound to the other. Recording remains
 exclusive. Older Servers retain their original exclusive behavior.
 
 With xdb Server 1.4.0 or later, touchscreens forward up to five fingers.
-Mouse input remains single-finger. Older Servers keep single-finger mouse input.
+Mouse shortcuts match scrcpy: Ctrl + left drag simulates pinch/rotation, Shift +
+left drag simulates a two-finger vertical slide, and Ctrl + Shift + left drag
+simulates a horizontal slide. Hold the modifiers when pressing the mouse button;
+releasing the mouse lifts both fingers. Older Servers keep single-finger mouse input.
 
 ## Common operations
 
@@ -92,6 +95,8 @@ scrctl --lang en --help
 | --- | --- |
 | Quit / fullscreen | MOD+Q / MOD+F or F11 |
 | Touch / drag | Left mouse button |
+| Pinch / rotate | Ctrl + left drag |
+| Two-finger vertical / horizontal slide | Shift + left drag / Ctrl + Shift + left drag |
 | Home / lock / volume | MOD+H / MOD+P / MOD+↑ or ↓ |
 | Paste host clipboard | MOD+V |
 | Request device rotation | MOD+R |

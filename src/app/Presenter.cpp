@@ -393,7 +393,7 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
     // 合并同一轮的鼠标移动事件，仅发送最后一个位置，减少高采样率鼠标带来的
     // 重复 HID 报告。按下和抬起仍保留各自事件。
     bool pending_move = false;
-    double px = 0, py = 0;
+    double px = 0, py = 0, vx = 0, vy = 0;
     const Uint32 window_id = window_ != nullptr ? SDL_GetWindowID(window_) : 0;
     const auto button_failed = [&] {
         // DOWN 可能只送达一部分；先尽力松开所有尝试过的 Consumer，再清其它输入。
@@ -641,12 +641,21 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
                 }
                 ++input_generation_;
                 dragging_ = true;
+                const auto mods = SDL_GetModState();
+                const bool ctrl = (mods & KMOD_CTRL) != 0;
+                const bool shift = (mods & KMOD_SHIFT) != 0;
+                virtual_invert_x_ = ctrl != shift;
+                virtual_invert_y_ = ctrl;
+                virtual_touch_ = on_contact_ && (ctrl || shift) &&
+                    virtual_touch_position(e.button.x, e.button.y, vx, vy);
+                last_virtual_x_ = vx;
+                last_virtual_y_ = vy;
                 last_touch_x_ = px;
                 last_touch_y_ = py;
                 if (debug_input_) {
                     report_input(e.button.x, e.button.y, px, py, SCRCTL_TR("down"));
                 }
-                on_touch(px, py, true);
+                send_mouse_touch(on_touch, true);
             }
             break;
         case SDL_MOUSEMOTION:
@@ -660,6 +669,11 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
                 }
                 if (debug_input_) {
                     report_input(e.motion.x, e.motion.y, px, py, SCRCTL_TR("move"));
+                }
+                if (virtual_touch_ && !virtual_touch_position(e.motion.x, e.motion.y, vx, vy)) {
+                    pending_move = false;
+                    release_touch(on_touch);
+                    break;
                 }
                 pending_move = true;
             }
@@ -679,11 +693,15 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
                     pending_move = false;
                     last_touch_x_ = px;
                     last_touch_y_ = py;
-                    on_touch(px, py, true);
+                    last_virtual_x_ = vx;
+                    last_virtual_y_ = vy;
+                    send_mouse_touch(on_touch, true);
                 }
                 if (to_display(e.button.x, e.button.y, px, py)) {
                     last_touch_x_ = px;
                     last_touch_y_ = py;
+                    if (virtual_touch_)
+                        virtual_touch_position(e.button.x, e.button.y, last_virtual_x_, last_virtual_y_);
                 }
                 release_touch(on_touch);
             }
@@ -710,7 +728,9 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
         pending_move = false;
         last_touch_x_ = px;
         last_touch_y_ = py;
-        on_touch(px, py, true);
+        last_virtual_x_ = vx;
+        last_virtual_y_ = vy;
+        send_mouse_touch(on_touch, true);
     }
     return quit;
 }
@@ -994,9 +1014,24 @@ bool Presenter::resize_window(bool pixel_perfect,
     return true;
 }
 
+bool Presenter::virtual_touch_position(int raw_x, int raw_y, double &x, double &y) const {
+    int u = 0, v = 0;
+    if (!to_content(raw_x, raw_y, u, v)) return false;
+    // Like scrcpy, reflect in the visible frame axes before mapping to device coordinates.
+    if (virtual_invert_x_) u = view_w_ - 1 - u;
+    if (virtual_invert_y_) v = view_h_ - 1 - v;
+    return viewport_fraction_to_panel(u, v, src_, degrees_, x, y, horizontal_flip_);
+}
+
+void Presenter::send_mouse_touch(const std::function<void(double, double, bool)> &on_touch, bool down) {
+    if (on_touch) on_touch(last_touch_x_, last_touch_y_, down);
+    if (virtual_touch_ && on_contact_) on_contact_(1, last_virtual_x_, last_virtual_y_, down);
+}
+
 void Presenter::release_touch(const std::function<void(double, double, bool)> &on_touch) {
-    if (dragging_ && on_touch) on_touch(last_touch_x_, last_touch_y_, false);
+    if (dragging_) send_mouse_touch(on_touch, false);
     dragging_ = false;
+    virtual_touch_ = false;
     for (const auto &[key, finger] : fingers_)
         if (on_contact_) on_contact_(finger.contact, finger.x, finger.y, false);
     fingers_.clear();

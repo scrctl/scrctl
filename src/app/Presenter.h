@@ -194,6 +194,10 @@ class Presenter {
     /// 以本窗口的 MINIMIZED/RESTORED 事件补充 SDL flag，允许事件处理与绘制分开。
     bool minimized_ = false;
     bool dragging_ = false;
+    bool virtual_touch_ = false, virtual_invert_x_ = false, virtual_invert_y_ = false;
+    double last_virtual_x_ = 0, last_virtual_y_ = 0;
+    bool virtual_touch_position(int raw_x, int raw_y, double &x, double &y) const;
+    void send_mouse_touch(const std::function<void(double, double, bool)> &on_touch, bool down);
     struct Finger { int contact; double x, y; };
     std::map<std::pair<SDL_TouchID, SDL_FingerID>, Finger> fingers_;
     ContactHandler on_contact_;

@@ -1122,6 +1122,35 @@ void presenter_multitouch_contacts() {
           std::none_of(contacts.begin() + before_release, contacts.end(),
                        [](const Contact &c) { return c.down; }), "失焦释放所有仍按住的手指");
     f.window(SDL_WINDOWEVENT_FOCUS_GAINED); f.pump();
+    const auto old_mods = SDL_GetModState();
+    for (auto mods : {KMOD_CTRL, KMOD_SHIFT, static_cast<SDL_Keymod>(KMOD_CTRL | KMOD_SHIFT)}) {
+        contacts.clear(); f.touches.clear();
+        SDL_SetModState(mods);
+        f.mouse(SDL_MOUSEBUTTONDOWN, 16, 24); f.pump();
+        SDL_SetModState(KMOD_NONE); // 提前松开修饰键不改变已开始的手势。
+        f.mouse(SDL_MOUSEMOTION, 20, 30); f.pump();
+        f.mouse(SDL_MOUSEBUTTONUP, 20, 30); f.pump();
+        check(f.touches.size() == 3 && contacts.size() == 3,
+              "scrcpy 修饰键手势均发送双指按下、移动和抬起");
+        if (f.touches.size() == 3 && contacts.size() == 3) {
+            const bool ctrl = (mods & KMOD_CTRL) != 0;
+            const bool shift = (mods & KMOD_SHIFT) != 0;
+            double x = 0, y = 0;
+            scrctl::app::viewport_fraction_to_panel(ctrl != shift ? 63 - 16 : 16,
+                                       ctrl ? 95 - 24 : 24, f.crop, 0, x, y);
+            check(contacts[0].id == 1 && contacts[0].down && !contacts[2].down &&
+                  std::abs(contacts[0].x - x) < .0001 && std::abs(contacts[0].y - y) < .0001,
+                  "Ctrl、Shift 与 Ctrl+Shift 的虚拟触点反射轴与 scrcpy 一致");
+        }
+    }
+    contacts.clear(); f.touches.clear();
+    SDL_SetModState(KMOD_CTRL);
+    f.mouse(SDL_MOUSEBUTTONDOWN, 16, 24); f.pump();
+    f.window(SDL_WINDOWEVENT_FOCUS_LOST); f.pump();
+    check(contacts.size() == 2 && !contacts.back().down &&
+          f.touches.size() == 2 && !f.touches.back().down, "失焦同时释放鼠标和虚拟第二指");
+    f.window(SDL_WINDOWEVENT_FOCUS_GAINED); f.pump();
+    SDL_SetModState(old_mods);
     contacts.clear();
     f.presenter.set_contact_handler({});
     f.mouse(SDL_MOUSEBUTTONDOWN, 16, 24); f.mouse(SDL_MOUSEBUTTONUP, 16, 24); f.pump();

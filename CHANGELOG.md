@@ -6,7 +6,9 @@
 
 - Forward up to five touchscreen contacts with xdb Server 1.4.0 or later.
   Preserve individual finger identities and release held contacts on focus or
-  geometry changes. Mouse input and single-finger compatibility remain unchanged.
+  geometry changes. Older Servers retain single-finger compatibility.
+- Match scrcpy mouse gestures: Ctrl + left drag for pinch/rotation, Shift for
+  vertical two-finger slides, and Ctrl + Shift for horizontal slides.
 
 ## 1.1.0 — 2026-10-29
 
