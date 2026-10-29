@@ -569,6 +569,16 @@ int run(int argc, char **argv) {
         }
         if (presenter == nullptr) {
             presenter = std::make_unique<Presenter>();
+            if (control_enabled && live && live->supports_multitouch()) {
+                presenter->set_contact_handler([&](int contact, double x, double y, bool down) {
+                    if ((control_warned && down) || o.no_video_playback) return;
+                    std::string error;
+                    if (!live->control(contact, x, y, down, error) && !control_warned) {
+                        control_err = std::move(error);
+                        input_failed();
+                    }
+                });
+            }
             presenter->set_debug_input(o.debug_input);
             presenter->set_background(o.bg[0], o.bg[1], o.bg[2]);
             if (!presenter->open(static_cast<int>(f.width), static_cast<int>(f.height),

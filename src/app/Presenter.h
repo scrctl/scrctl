@@ -5,6 +5,7 @@
 #include "decode/Decoder.h"
 #include <SDL.h>
 #include <functional>
+#include <map>
 #include <string>
 
 namespace scrctl::app {
@@ -26,6 +27,9 @@ struct WindowSpec {
 
 class Presenter {
   public:
+    using ContactHandler = std::function<void(int, double, double, bool)>;
+    void set_contact_handler(ContactHandler handler) { on_contact_ = std::move(handler); }
+
     using KeyboardHandler = std::function<void(const KeyboardState::Report &)>;
     using PasteHandler = std::function<void()>;
     /// 单次设备横竖屏请求；调用方异步执行，不能阻塞窗口事件循环。
@@ -190,6 +194,9 @@ class Presenter {
     /// 以本窗口的 MINIMIZED/RESTORED 事件补充 SDL flag，允许事件处理与绘制分开。
     bool minimized_ = false;
     bool dragging_ = false;
+    struct Finger { int contact; double x, y; };
+    std::map<std::pair<SDL_TouchID, SDL_FingerID>, Finger> fingers_;
+    ContactHandler on_contact_;
     /// 源坐标依据改变时，下一轮 pump 统一释放触摸和键盘一次。
     bool release_pending_ = false;
     double last_touch_x_ = 0, last_touch_y_ = 0;

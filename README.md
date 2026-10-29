@@ -65,11 +65,14 @@ xdb starts on demand and listens on loopback only.
 With xdb Server 1.3.0 or later advertising `shared_control_sessions`, ordinary
 mirrors (without `--record`) automatically share one video producer. Open scrctl twice
 for the same device: both windows can control it, and closing one preserves the
-other. The single touch contact is serialized between windows; keyboard/button
+other. Touch gestures are serialized between windows; keyboard/button
 holds are tracked per window. Video decoding options must match. Audio plays
 through one window; the other continues with video/control. Closing the audio
 window does not automatically move sound to the other. Recording remains
 exclusive. Older Servers retain their original exclusive behavior.
+
+With xdb Server 1.4.0 or later, touchscreens forward up to five fingers.
+Mouse input remains single-finger. Older Servers keep single-finger mouse input.
 
 ## Common operations
 

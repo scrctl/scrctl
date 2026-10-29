@@ -1,6 +1,8 @@
 #include "app/LiveSource.h"
 #include "app/SourcePick.h"
 #include "i18n/Translation.h"
+#include <array>
+#include <charconv>
 #include <SDL.h>
 #include <cstdio>
 #include <filesystem>
@@ -46,6 +48,23 @@ bool LiveSource::start(const Options &options, std::string &error) {
     Response info;
     if (!control_.request("server.info", Json::object(), info, error))
         return false;
+    // Old Servers ignore unknown fields, so never send nonzero contacts to them.
+    auto version = info.value.value("version", std::string());
+    std::array<unsigned, 3> parts{};
+    std::string_view remaining = version;
+    bool valid_version = true;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        const auto dot = remaining.find('.');
+        auto component = remaining.substr(0, dot);
+        const auto [end, ec] = std::from_chars(component.data(), component.data() + component.size(), parts[i]);
+        if (component.empty() || ec != std::errc{} || end != component.data() + component.size() ||
+            (i < 2 ? dot == std::string_view::npos : dot != std::string_view::npos)) {
+            valid_version = false;
+            break;
+        }
+        if (i < 2) remaining.remove_prefix(dot + 1);
+    }
+    multitouch_ = valid_version && parts >= std::array<unsigned, 3>{1, 4, 0};
     shared_control_ = options.record_path.empty() && want_video_ && decode_video_ &&
         info.value.value("capabilities", Json::object()).value("shared_control_sessions", false);
     Json connection{{"udid", options.serial}, {"wifi", options.wifi}, {"port", options.wifi_port}};
@@ -267,7 +286,16 @@ bool LiveSource::finish_recording(std::string &error) {
     return finish_ok_;
 }
 bool LiveSource::control(double x, double y, bool down, std::string &e) {
-    return control_.request("input.touch", {{"x", x}, {"y", y}, {"down", down}}, e);
+    return control(0, x, y, down, e);
+}
+bool LiveSource::control(int contact, double x, double y, bool down, std::string &e) {
+    if (contact < 0 || contact >= 5 || (contact != 0 && !multitouch_)) {
+        e = "Multi-touch requires xdb Server 1.4.0 or later";
+        return false;
+    }
+    Json params{{"x", x}, {"y", y}, {"down", down}};
+    if (multitouch_) params["contact"] = contact;
+    return control_.request("input.touch", params, e);
 }
 bool LiveSource::keyboard_state(const std::vector<uint16_t> &usages, std::string &e) {
     return control_.request("input.keyboard", {{"usages", usages}}, e);

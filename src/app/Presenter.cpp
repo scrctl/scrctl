@@ -6,6 +6,7 @@
 #include "app/WindowIcon.h"
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <limits>
 
 namespace scrctl::app {
@@ -580,7 +581,42 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
             // 物理模式已停用本进程 SDL 文本输入；此前排队的文字/IME 编辑
             // 也不能与物理键报告混合注入。不更改宿主机输入法或键盘布局。
             break;
+        case SDL_FINGERDOWN:
+        case SDL_FINGERMOTION:
+        case SDL_FINGERUP: {
+            if (!on_contact_ || !video_playback_ || !input_active_ || window_id == 0 ||
+                e.tfinger.windowID != window_id || dragging_) break;
+            const auto device_type = SDL_GetTouchDeviceType(e.tfinger.touchId);
+            if (device_type == SDL_TOUCH_DEVICE_INDIRECT_ABSOLUTE ||
+                device_type == SDL_TOUCH_DEVICE_INDIRECT_RELATIVE) break;
+            const auto key = std::pair(e.tfinger.touchId, e.tfinger.fingerId);
+            auto found = fingers_.find(key);
+            double x = 0, y = 0;
+            int width = 0, height = 0;
+            SDL_GetWindowSize(window_, &width, &height);
+            if (!std::isfinite(e.tfinger.x) || !std::isfinite(e.tfinger.y)) break;
+            const int raw_x = static_cast<int>(std::clamp(e.tfinger.x, 0.f, 1.f) * std::max(0, width - 1));
+            const int raw_y = static_cast<int>(std::clamp(e.tfinger.y, 0.f, 1.f) * std::max(0, height - 1));
+            if (e.type == SDL_FINGERDOWN) {
+                if (found != fingers_.end() || !is_content_point(raw_x, raw_y) ||
+                    !to_display(raw_x, raw_y, x, y)) break;
+                int contact = 0;
+                while (contact < 5 && std::any_of(fingers_.begin(), fingers_.end(),
+                    [contact](const auto &entry) { return entry.second.contact == contact; })) ++contact;
+                if (contact == 5) break;
+                ++input_generation_;
+                fingers_.emplace(key, Finger{contact, x, y});
+                on_contact_(contact, x, y, true);
+            } else if (found != fingers_.end()) {
+                auto &finger = found->second;
+                if (to_display(raw_x, raw_y, x, y)) { finger.x = x; finger.y = y; }
+                on_contact_(finger.contact, finger.x, finger.y, e.type != SDL_FINGERUP);
+                if (e.type == SDL_FINGERUP) fingers_.erase(found);
+            }
+            break;
+        }
         case SDL_MOUSEBUTTONDOWN:
+            if (on_contact_ && e.button.which == SDL_TOUCH_MOUSEID) break;
             if (input_active_ && window_id != 0 && e.button.windowID == window_id &&
                 e.button.button == SDL_BUTTON_MIDDLE && on_button && !button_failed_ &&
                 middle_home_.usage == 0) {
@@ -599,7 +635,7 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
                     }
                     break;
                 }
-                if (!on_touch) break;
+                if (!on_touch || !fingers_.empty() || dragging_) break;
                 if (!to_display(e.button.x, e.button.y, px, py)) {
                     break;
                 }
@@ -614,6 +650,7 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
             }
             break;
         case SDL_MOUSEMOTION:
+            if (on_contact_ && e.motion.which == SDL_TOUCH_MOUSEID) break;
             if (video_playback_ && input_active_ && window_id != 0 && e.motion.windowID == window_id &&
                 dragging_ && on_touch) {
                 if (!to_display(e.motion.x, e.motion.y, px, py)) {
@@ -628,6 +665,7 @@ bool Presenter::pump(const std::function<void(double, double, bool)> &on_touch,
             }
             break;
         case SDL_MOUSEBUTTONUP:
+            if (on_contact_ && e.button.which == SDL_TOUCH_MOUSEID) break;
             if (window_id != 0 && e.button.windowID == window_id &&
                 e.button.button == SDL_BUTTON_MIDDLE && middle_home_.usage != 0) {
                 const bool ok = release_button(middle_home_, on_button);
@@ -706,6 +744,8 @@ void Presenter::discard_queued_input() {
         case SDL_MOUSEMOTION: event_id = event->motion.windowID; break;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: event_id = event->button.windowID; break;
         case SDL_MOUSEWHEEL: event_id = event->wheel.windowID; break;
+        case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
+            event_id = event->tfinger.windowID; break;
         default: return 1;
         }
         return event_id == id ? 0 : 1;
@@ -727,6 +767,8 @@ void Presenter::discard_queued_pointer() {
         case SDL_MOUSEMOTION: event_id = event->motion.windowID; break;
         case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP: event_id = event->button.windowID; break;
         case SDL_MOUSEWHEEL: event_id = event->wheel.windowID; break;
+        case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
+            event_id = event->tfinger.windowID; break;
         default: return 1;
         }
         return event_id == filter.id ? 0 : 1;
@@ -953,10 +995,11 @@ bool Presenter::resize_window(bool pixel_perfect,
 }
 
 void Presenter::release_touch(const std::function<void(double, double, bool)> &on_touch) {
-    if (dragging_ && on_touch) {
-        on_touch(last_touch_x_, last_touch_y_, false);
-    }
+    if (dragging_ && on_touch) on_touch(last_touch_x_, last_touch_y_, false);
     dragging_ = false;
+    for (const auto &[key, finger] : fingers_)
+        if (on_contact_) on_contact_(finger.contact, finger.x, finger.y, false);
+    fingers_.clear();
 }
 
 void Presenter::release_input(const std::function<void(double, double, bool)> &on_touch,
@@ -972,7 +1015,7 @@ void Presenter::release_input(const std::function<void(double, double, bool)> &o
 }
 
 bool Presenter::ready_for_paste() const {
-    return window_ != nullptr && input_active_ && !release_pending_ && !dragging_ &&
+    return window_ != nullptr && input_active_ && !release_pending_ && !dragging_ && fingers_.empty() &&
            keyboard_.held().empty() && middle_home_.usage == 0 &&
            std::none_of(button_keys_.begin(), button_keys_.end(),
                         [](const ButtonKey &key) { return key.usage != 0; });

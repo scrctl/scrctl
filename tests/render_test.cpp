@@ -1086,6 +1086,48 @@ struct KeyboardFixture {
     }
 };
 
+void presenter_multitouch_contacts() {
+    KeyboardFixture f("Presenter multi-touch", 64, 96);
+    if (!f.window_id) return;
+    check(f.presenter.draw(f.frame, f.crop), "多点输入前绘制有效几何帧");
+    struct Contact { int id; double x, y; bool down; };
+    std::vector<Contact> contacts;
+    f.presenter.set_contact_handler([&](int id, double x, double y, bool down) {
+        contacts.push_back({id, x, y, down});
+    });
+    const auto finger = [&](Uint32 type, Sint64 id, Uint32 window = 0) {
+        SDL_Event event{};
+        event.type = type;
+        event.tfinger.windowID = window ? window : f.window_id;
+        event.tfinger.touchId = 123;
+        event.tfinger.fingerId = id;
+        event.tfinger.x = .25f; event.tfinger.y = .75f;
+        check(SDL_PushEvent(&event) == 1, "将真实多指事件格式送入 SDL 队列");
+    };
+    for (int i = 0; i < 6; ++i) finger(SDL_FINGERDOWN, 20 + i);
+    finger(SDL_FINGERDOWN, 100, f.window_id + 1);
+    f.mouse(SDL_MOUSEBUTTONDOWN, 16, 24, 1, SDL_TOUCH_MOUSEID);
+    f.pump();
+    check(contacts.size() == 5 && f.touches.empty(), "五指上限且合成鼠标和其它窗口不重复注入");
+    for (int i = 0; i < 5 && contacts.size() == 5; ++i)
+        check(contacts[i].id == i && contacts[i].down, "SDL finger ID 映射为稳定的设备触点");
+    finger(SDL_FINGERUP, 22);
+    finger(SDL_FINGERMOTION, 24);
+    f.pump();
+    check(contacts.size() == 7 && !contacts[5].down && contacts[5].id == 2 &&
+          contacts[6].down && contacts[6].id == 4, "单独抬起一指保留其它触点编号");
+    const auto before_release = contacts.size();
+    f.window(SDL_WINDOWEVENT_FOCUS_LOST); f.pump();
+    check(contacts.size() == before_release + 4 &&
+          std::none_of(contacts.begin() + before_release, contacts.end(),
+                       [](const Contact &c) { return c.down; }), "失焦释放所有仍按住的手指");
+    f.window(SDL_WINDOWEVENT_FOCUS_GAINED); f.pump();
+    contacts.clear();
+    f.presenter.set_contact_handler({});
+    f.mouse(SDL_MOUSEBUTTONDOWN, 16, 24); f.mouse(SDL_MOUSEBUTTONUP, 16, 24); f.pump();
+    check(contacts.empty(), "旧 Server 模式仅使用原有单指回调");
+}
+
 struct ButtonFixture : KeyboardFixture {
     struct Button {
         uint16_t page, usage;
@@ -3608,6 +3650,7 @@ int main() {
     presenter_source_size_changes();
     presenter_releases_touch_when_geometry_changes();
     presenter_flip_mouse_events();
+    presenter_multitouch_contacts();
     presenter_releases_touch_when_window_deactivates();
     presenter_shortcuts_preserve_normal_input();
     presenter_physical_text_input_scope();

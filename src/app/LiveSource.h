@@ -46,6 +46,8 @@ class LiveSource final : public FrameSource {
     bool has_audio() const { return audio_enabled_; }
     bool has_video() const { return want_video_; }
     bool video_decoding_enabled() const { return want_video_ && decode_video_; }
+    bool supports_multitouch() const { return multitouch_; }
+    bool control(int contact, double x, double y, bool down, std::string &error);
     bool control(double x, double y, bool down, std::string &error);
     bool keyboard_state(const std::vector<uint16_t> &usages, std::string &error);
     bool type_text(const std::string &, int hold_ms, std::string &error);
@@ -72,6 +74,7 @@ class LiveSource final : public FrameSource {
     bool audio_enabled_ = false, want_video_ = true, decode_video_ = true, finished_recording_ = false;
     bool finish_ok_ = true;
     bool shared_control_ = false;
+    bool multitouch_ = false;
     std::string finish_error_;
     std::jthread receiver_;
     mutable std::mutex mutex_;

@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## Unreleased
+
+- Forward up to five touchscreen contacts with xdb Server 1.4.0 or later.
+  Preserve individual finger identities and release held contacts on focus or
+  geometry changes. Mouse input and single-finger compatibility remain unchanged.
+
 ## 1.1.0 — 2026-10-29
 
 - Negotiate shared control for ordinary mirrors when supported by xdb Server.
