@@ -2,7 +2,9 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
-## Unreleased
+## 1.2.0 — 2026-10-29
+
+- Update the embedded XDeviceBridge client to 1.4.0.
 
 - Forward up to five touchscreen contacts with xdb Server 1.4.0 or later.
   Preserve individual finger identities and release held contacts on focus or
