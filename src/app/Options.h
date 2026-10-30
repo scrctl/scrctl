@@ -84,6 +84,8 @@ struct Options {
     /// 使用平台硬件解码后端。当前 VideoToolbox 适配的 2 字节 NAL 长度
     /// 限制为 65535 字节，默认软件解码可处理更大的关键帧。
     bool hw_decode = false;
+    std::optional<uint64_t> video_bit_rate; ///< bit/s；省略时沿用设备／共享视频的设置。
+    unsigned max_fps = 0; ///< 接收端像素转换及发布上限；0 不限速。
     /// --no-audio 禁止建立音频会话和解码音频。
     bool no_audio = false;
     /// --audio-dup 保留手机播放。默认将音频转到电脑；切换路由可能暂停播放器。

@@ -256,7 +256,7 @@ msgstr ""
 msgid "iOS screen mirroring and control"
 msgstr ""
 
-#: src/app/Cli.cpp:21
+#: src/app/Cli.cpp:22
 msgid ""
 "With no arguments, mirror the connected device.\n"
 "Left mouse button maps to touch. Ordinary keys use the device's keyboard "
@@ -278,11 +278,12 @@ msgid ""
 "Audio is forwarded to the computer by default; --audio-dup keeps phone "
 "playback. Switching routes may pause the phone's player; resume it if "
 "needed.\n"
-"The device chooses encoding dimensions, bitrate and frame rate. Display crop "
-"and --display-orientation leave recordings unchanged; --orientation rotates "
-"display and container recordings together. Record selected tracks to .mp4 "
-"or .mkv, or use .hevc for raw video; --record-format overrides the file "
-"extension.\n"
+"The device negotiates encoding dimensions, bitrate and frame rate. --video-"
+"bit-rate requests a device bitrate ceiling; --max-fps limits receiver "
+"output, not device encoding. Display crop and --display-orientation leave "
+"recordings unchanged; --orientation rotates display and container recordings "
+"together. Record selected tracks to .mp4 or .mkv, or use .hevc for raw "
+"video; --record-format overrides the file extension.\n"
 "Wireless use requires pairing. --help / --version do not connect to the "
 "device."
 msgstr ""
@@ -8164,4 +8165,35 @@ msgstr ""
 
 #: tools/wifi_probe.cpp:919
 msgid "not available"
+msgstr ""
+
+
+#: src/app/Cli.cpp:150
+msgid "Expected a nonnegative integer bit/s value, optionally suffixed K or M"
+msgstr ""
+
+#: src/app/Cli.cpp:152
+msgid ""
+"Request device video bitrate ceiling in bit/s (e.g. 2M); 0: device defaults; "
+"default: reuse"
+msgstr ""
+
+#: src/app/Cli.cpp:155
+msgid ""
+"Limit receiver image output to FPS (0..240); 0: unlimited; device encoding "
+"and recording are unchanged"
+msgstr ""
+
+#: src/app/Cli.cpp:293
+msgid "Requires live video stream capture"
+msgstr ""
+
+#: src/app/LiveSource.cpp:35
+msgid "--max-fps requires decoded video output"
+msgstr ""
+
+#: src/app/LiveSource.cpp:58
+msgid ""
+"xdb Server does not support the requested video bitrate or output frame-rate "
+"limit"
 msgstr ""

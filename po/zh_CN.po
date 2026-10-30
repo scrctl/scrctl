@@ -257,7 +257,7 @@ msgstr "音频输出已打开：%d Hz / %d 声道，后端 %s，回调 %u 帧（
 msgid "iOS screen mirroring and control"
 msgstr "iOS 屏幕镜像与控制"
 
-#: src/app/Cli.cpp:21
+#: src/app/Cli.cpp:22
 msgid ""
 "With no arguments, mirror the connected device.\n"
 "Left mouse button maps to touch. Ordinary keys use the device's keyboard "
@@ -279,31 +279,15 @@ msgid ""
 "Audio is forwarded to the computer by default; --audio-dup keeps phone "
 "playback. Switching routes may pause the phone's player; resume it if "
 "needed.\n"
-"The device chooses encoding dimensions, bitrate and frame rate. Display crop "
-"and --display-orientation leave recordings unchanged; --orientation rotates "
-"display and container recordings together. Record selected tracks to .mp4 "
-"or .mkv, or use .hevc for raw video; --record-format overrides the file "
-"extension.\n"
+"The device negotiates encoding dimensions, bitrate and frame rate. --video-"
+"bit-rate requests a device bitrate ceiling; --max-fps limits receiver "
+"output, not device encoding. Display crop and --display-orientation leave "
+"recordings unchanged; --orientation rotates display and container recordings "
+"together. Record selected tracks to .mp4 or .mkv, or use .hevc for raw "
+"video; --record-format overrides the file extension.\n"
 "Wireless use requires pairing. --help / --version do not connect to the "
 "device."
-msgstr ""
-"不指定参数时，镜像已连接的设备。\n"
-"鼠标左键映射为触摸。普通按键使用设备的键盘布局和输入法。\n"
-"退出：MOD+Q。全屏：MOD+F 或 F11。MOD 默认是左 Alt 或左 Super，可用 --"
-"shortcut-mod 更改。\n"
-"粘贴电脑剪贴板：MOD+V（支持 Unicode）。\n"
-"主屏：MOD+H 或鼠标中键。音量：MOD+上/下。侧键：MOD+P。\n"
-"恢复原尺寸：MOD+G。去掉画面留边：MOD+W 或双击空白留边。\n"
-"向左/右旋转显示：MOD+左/右（不改变录制）。\n"
-"切换手机横竖屏：MOD+R（需启用设备控制且应用支持转屏）。\n"
-"暂停或刷新冻结画面：MOD+Z。恢复显示：MOD+Shift+Z（采集、音频和录制继续）。\n"
-"水平镜像：MOD+Shift+左/右。垂直镜像：MOD+Shift+上/下。\n"
-"默认将音频转到电脑；--audio-dup 保留手机播放。切换路由可能暂停手机播放器，请"
-"按需继续播放。\n"
-"设备决定编码尺寸、码率和帧率。显示裁剪及 --display-orientation 不改变录制；--"
-"orientation 同时旋转显示与容器录制。所选轨道可录制为 .mp4 或 .mkv，裸视频请"
-"用 .hevc；--record-format 可覆盖文件扩展名。\n"
-"无线使用需要配对。--help / --version 不连接设备。"
+msgstr "不指定参数时，镜像已连接的设备。\n鼠标左键映射为触摸。普通按键使用设备的键盘布局和输入法。\n退出：MOD+Q。全屏：MOD+F 或 F11。MOD 默认是左 Alt 或左 Super，可用 --shortcut-mod 更改。\n粘贴电脑剪贴板：MOD+V（支持 Unicode）。\n主屏：MOD+H 或鼠标中键。音量：MOD+上/下。侧键：MOD+P。\n恢复原尺寸：MOD+G。去掉画面留边：MOD+W 或双击空白留边。\n向左/右旋转显示：MOD+左/右（不改变录制）。\n切换手机横竖屏：MOD+R（需启用设备控制且应用支持转屏）。\n暂停或刷新冻结画面：MOD+Z。恢复显示：MOD+Shift+Z（采集、音频和录制继续）。\n水平镜像：MOD+Shift+左/右。垂直镜像：MOD+Shift+上/下。\n默认将音频转到电脑；--audio-dup 保留手机播放。切换路由可能暂停手机播放器，请按需继续播放。\n设备协商编码尺寸、码率和帧率。--video-bit-rate 请求设备码率上限；--max-fps 限制接收端输出，不改变手机编码。显示裁剪及 --display-orientation 不改变录制；--orientation 同时旋转显示与容器录制。所选轨道可录制为 .mp4 或 .mkv，裸视频请用 .hevc；--record-format 可覆盖文件扩展名。\n无线使用需要配对。--help / --version 不连接设备。"
 
 #: src/app/Cli.cpp:39 tools/app_launch_probe.cpp:31 tools/applist_probe.cpp:34
 #: tools/audio_decode_probe.cpp:193 tools/audio_pump_probe.cpp:85
@@ -9189,3 +9173,34 @@ msgstr "不可用"
 
 #~ msgid "verify-M4 TLV decode incomplete: "
 #~ msgstr "verify-M4 的 TLV 没解干净: "
+
+
+#: src/app/Cli.cpp:150
+msgid "Expected a nonnegative integer bit/s value, optionally suffixed K or M"
+msgstr "请输入非负整数码率，单位 bit/s，可带 K 或 M 后缀"
+
+#: src/app/Cli.cpp:152
+msgid ""
+"Request device video bitrate ceiling in bit/s (e.g. 2M); 0: device defaults; "
+"default: reuse"
+msgstr "请求设备视频码率上限，单位 bit/s（如 2M）；0 使用设备默认值，省略时沿用已有设置"
+
+#: src/app/Cli.cpp:155
+msgid ""
+"Limit receiver image output to FPS (0..240); 0: unlimited; device encoding "
+"and recording are unchanged"
+msgstr "限制接收端图像输出帧率（0..240）；0 不限速，不改变手机编码和录制帧率"
+
+#: src/app/Cli.cpp:293
+msgid "Requires live video stream capture"
+msgstr "需要实时视频流采集"
+
+#: src/app/LiveSource.cpp:35
+msgid "--max-fps requires decoded video output"
+msgstr "--max-fps 需要解码视频输出"
+
+#: src/app/LiveSource.cpp:58
+msgid ""
+"xdb Server does not support the requested video bitrate or output frame-rate "
+"limit"
+msgstr "xdb Server 不支持请求的视频码率或输出帧率限制"

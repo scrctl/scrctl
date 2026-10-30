@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cctype>
 #include <map>
+#include <limits>
 #include <cmath>
 #include <cstdio>
 #include <vector>
@@ -31,7 +32,8 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
         "Mirror display horizontally: MOD+Shift+Left/Right. Mirror vertically: MOD+Shift+Up/Down.\n"
         "Audio is forwarded to the computer by default; --audio-dup keeps phone playback. "
         "Switching routes may pause the phone's player; resume it if needed.\n"
-        "The device chooses encoding dimensions, bitrate and frame rate. Display crop and "
+        "The device negotiates encoding dimensions, bitrate and frame rate. --video-bit-rate requests "
+        "a device bitrate ceiling; --max-fps limits receiver output, not device encoding. Display crop and "
         "--display-orientation leave recordings unchanged; --orientation rotates display and "
         "container recordings together. Record selected tracks to .mp4 or .mkv, or use .hevc for raw video; "
         "--record-format overrides the file extension.\n"
@@ -134,6 +136,24 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
                  SCRCTL_N_("Disable computer video and audio playback; keep selected recording tracks"));
     app.add_flag("--no-window", o.no_window, SCRCTL_N_("Run without a window"));
     app.add_flag("--hw-decode", o.hw_decode, SCRCTL_N_("Use platform hardware decoder; default: software"));
+    app.add_option_function<std::string>("-b,--video-bit-rate", [&](std::string value) {
+        uint64_t multiplier = 1;
+        if (!value.empty() && (value.back() == 'K' || value.back() == 'k' ||
+                               value.back() == 'M' || value.back() == 'm')) {
+            multiplier = value.back() == 'K' || value.back() == 'k' ? 1000 : 1000000;
+            value.pop_back();
+        }
+        uint64_t rate = 0;
+        const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), rate);
+        if (value.empty() || ec != std::errc{} || end != value.data() + value.size() ||
+            rate > std::numeric_limits<uint64_t>::max() / multiplier)
+            throw CLI::ValidationError("--video-bit-rate", SCRCTL_TR("Expected a nonnegative integer bit/s value, optionally suffixed K or M"));
+        o.video_bit_rate = rate * multiplier;
+    }, SCRCTL_N_("Request device video bitrate ceiling in bit/s (e.g. 2M); 0: device defaults; default: reuse"))
+        ->excludes("--play");
+    app.add_option("--max-fps", o.max_fps,
+                   SCRCTL_N_("Limit receiver image output to FPS (0..240); 0: unlimited; device encoding and recording are unchanged"))
+        ->check(CLI::Range(0, 240))->excludes("--play");
     app.add_flag("--debug-input", o.debug_input, SCRCTL_N_("Print input coordinates"));
     app.add_flag("--debug-net", o.debug_net, SCRCTL_N_("Add tunnel diagnostics to --stats"));
     app.add_flag("--stats", o.stats, SCRCTL_N_("Print statistics every second"));
@@ -267,6 +287,10 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
         if (o.path.empty() && o.no_video_playback && o.record.empty() && o.exit_after == 0 &&
             !o.hw_decode && o.test_degrade.empty() && o.video_source != "screenshot") {
             o.no_video = true;
+        }
+        if ((app.count("--video-bit-rate") || app.count("--max-fps")) &&
+            (o.no_video || o.video_source == "screenshot")) {
+            throw CLI::ValidationError("--video-bit-rate/--max-fps", SCRCTL_TR("Requires live video stream capture"));
         }
         if (o.no_video && !o.record.empty()) {
             if (!container_format) {

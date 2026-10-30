@@ -26,6 +26,23 @@ void check(bool ok, const char *message) {
 } // namespace
 
 int main() {
+    for (const auto &value : {"2M", "2000000", "2000K"}) {
+        Options options;
+        check(parse({"scrctl", "-b", value, "--max-fps", "15"}, options) == ParseResult::Run &&
+                  options.video_bit_rate == 2000000 && options.max_fps == 15,
+              "video bitrate suffixes and receiver FPS limit");
+    }
+    for (const auto &args : std::vector<std::vector<std::string>>{
+             {"-b", "-1"}, {"-b", "1.5M"}, {"-b", "18446744073709551615M"},
+             {"--max-fps", "241"}, {"-b", "2M", "--play", "file.hevc"},
+             {"-b", "2M", "--video-source", "screenshot"}, {"--max-fps", "15", "--no-video"}}) {
+        Options options;
+        auto command = args; command.insert(command.begin(), "scrctl");
+        check(parse(command, options) == ParseResult::Error, "invalid/inapplicable video rate option rejected");
+    }
+    Options large_rate;
+    check(parse({"scrctl", "-b", "18446744073709551615"}, large_rate) == ParseResult::Run &&
+              large_rate.video_bit_rate == UINT64_MAX, "bitrate is not clamped to a device-specific ceiling");
     Options ddi;
     check(parse({"scrctl", "--download-ddi", "--ddi-directory", "cache with spaces",
                  "--ddi-download-timeout", "120", "--lang", "en"}, ddi) == ParseResult::Run &&

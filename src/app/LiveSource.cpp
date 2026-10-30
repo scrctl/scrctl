@@ -31,6 +31,10 @@ bool LiveSource::start(const Options &options, std::string &error) {
         error = "Cancelled";
         return false;
     }
+    if (options.max_fps && !decode_video_) {
+        error = SCRCTL_TR("--max-fps requires decoded video output");
+        return false;
+    }
     if (!control_.connect(error))
         return false;
     std::jthread monitor([&](std::stop_token stop) {
@@ -48,6 +52,12 @@ bool LiveSource::start(const Options &options, std::string &error) {
     Response info;
     if (!control_.request("server.info", Json::object(), info, error))
         return false;
+    const auto capabilities = info.value.value("capabilities", Json::object());
+    if ((options.video_bit_rate.value_or(0) && !capabilities.value("video_max_bitrate", false)) ||
+        (options.max_fps && !capabilities.value("video_max_fps", false))) {
+        error = SCRCTL_TR("xdb Server does not support the requested video bitrate or output frame-rate limit");
+        return false;
+    }
     // Old Servers ignore unknown fields, so never send nonzero contacts to them.
     auto version = info.value.value("version", std::string());
     std::array<unsigned, 3> parts{};
@@ -102,10 +112,16 @@ bool LiveSource::start(const Options &options, std::string &error) {
                         .u8string();
                 params["record_path"] = std::string(path.begin(), path.end());
             }
-            if (!control_.request("video.start", params, error)) {
+            if (options.video_bit_rate) params["max_bitrate"] = *options.video_bit_rate;
+            if (options.max_fps) params["max_fps"] = options.max_fps;
+            Response started;
+            if (!control_.request("video.start", params, started, error)) {
                 if (!decode_video_ || error.find("requires iOS") == std::string::npos)
                     return false;
                 options_.video_source = "screenshot";
+            } else {
+                for (const auto &warning : started.value.value("warnings", Json::array()))
+                    std::fprintf(stderr, "Warning: %s\n", warning.get<std::string>().c_str());
             }
         }
         if (decode_video_) {

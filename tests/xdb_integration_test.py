@@ -11,9 +11,10 @@ from fake_server import FakeServer
 exe = str(Path(sys.argv[1]).resolve())
 with FakeServer() as server:
     env = {**os.environ, **server.environment, 'SDL_VIDEODRIVER':'dummy', 'SDL_AUDIODRIVER':'dummy', 'SDL_RENDER_DRIVER':'software'}
-    def run(*args):
+    def run(*args, warning=None):
         result = subprocess.run([exe, '--lang', 'en', *args], env=env, capture_output=True, text=True, encoding="utf-8", timeout=12)
         assert result.returncode == 0, (args, result.stdout, result.stderr)
+        if warning: assert warning in result.stderr, result.stderr
         return result.stdout
     run('--list-devices', '--discovery-timeout', '0')
     # Actual background BGRA receiver, ASCII input and finalized media ownership.
@@ -39,10 +40,26 @@ with FakeServer() as server:
 
     # A capable Server shares ordinary mirrors. Closing one must not issue the
     # legacy process-wide media.finish; recording still requests exclusivity.
+    unsupported = subprocess.run([exe, '--lang', 'en', '-b', '2M'], env=env,
+                                 capture_output=True, text=True, timeout=12)
+    assert unsupported.returncode != 0 and 'does not support' in unsupported.stderr
+    original_call = server.handle_call
+    warning = 'Ignoring max_bitrate=2000000; reusing running stream max_bitrate=1000000'
+    def rate_call(name, params):
+        value, body = original_call(name, params)
+        if name == 'server.info':
+            value['capabilities'].update(video_max_bitrate=True, video_max_fps=True)
+        if name == 'video.start' and 'max_bitrate' in params:
+            value['warnings'] = [warning]
+        return value, body
+    server.handle_call = rate_call
     server.shared_control = True
     start = len(server.calls)
-    run('-s', 'mock-iphone', '--no-window', '--no-audio', '--exit-after', '2')
+    run('-s', 'mock-iphone', '--no-window', '--no-audio', '--exit-after', '2',
+        '-b', '2M', '--max-fps', '15', warning=warning)
     shared_calls = server.calls[start:]
+    assert any(name == 'video.start' and p.get('max_bitrate') == 2000000 and p.get('max_fps') == 15
+               for name, p in shared_calls)
     assert any(name == 'connection.open' and p.get('access') == 'shared' for name, p in shared_calls)
     assert not any(name == 'media.finish' for name, _ in shared_calls)
     assert any(name == 'connection.close' for name, _ in shared_calls)

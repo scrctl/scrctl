@@ -71,6 +71,8 @@ xdb Server 1.3.0 或更新版本支持 `shared_control_sessions` 时，普通镜
 ## 常用操作
 
 ```sh
+scrctl --video-bit-rate=2M          # 请求设备视频码率上限，也可写 -b 2M
+scrctl --max-fps=15                 # 接收端输出限速，不改变手机编码或录制帧率
 scrctl --audio-buffer=200           # 增加缓冲，缓解传输抖动
 scrctl --audio-dup                  # 手机与电脑同时发声
 scrctl --no-audio                   # 不改变手机音频路由
@@ -79,6 +81,10 @@ scrctl --record capture.mp4 --no-audio
 scrctl --video-source screenshot    # 截图轮询，无音频及编码录制
 scrctl --lang zh-CN --help
 ```
+
+视频限速参数需要 xdb Server 提供相应能力。省略码率时沿用设备／共享视频设置，
+0 请求设备默认值；设备实际协商值可能不同。共享视频沿用首条流的码率，不同请求会警告。
+共享 `--max-fps` 取最高需求（不限速优先），不是每个窗口独立的流量限制。
 
 `MOD` 默认是左 Alt 或左 Super/Command，可用 `--shortcut-mod` 更改。
 

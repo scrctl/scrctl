@@ -148,6 +148,8 @@ int run(int argc, char **argv) {
         live_options.record_path = o.record;
         live_options.record_format = o.record_format;
         live_options.hw_decode = o.hw_decode;
+        live_options.video_bit_rate = o.video_bit_rate;
+        live_options.max_fps = o.max_fps;
         live_options.watch_display = !o.no_video_playback;
         live_options.want_video = !o.no_video;
         live_options.decode_video = !o.no_video && needs_pixels;

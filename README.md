@@ -80,6 +80,8 @@ releasing the mouse lifts both fingers. Older Servers keep single-finger mouse i
 ## Common operations
 
 ```sh
+scrctl --video-bit-rate=2M          # Request device video bitrate ceiling (-b 2M)
+scrctl --max-fps=15                 # Receiver output limit; device encoding/recording unchanged
 scrctl --audio-buffer=200           # More buffering for uneven delivery
 scrctl --audio-dup                  # Keep sound on both device and computer
 scrctl --no-audio                   # Leave device audio routing unchanged
@@ -88,6 +90,12 @@ scrctl --record capture.mp4 --no-audio
 scrctl --video-source screenshot    # Screenshot polling; no audio/encoded recording
 scrctl --lang en --help
 ```
+
+Video rate options require an XDB Server advertising the corresponding capability.
+Omitted bitrate preserves device/shared-stream settings; 0 requests device defaults.
+The device may negotiate a different bitrate. Shared video keeps the first stream's
+bitrate and warns on different requests. Shared `--max-fps` requests use the highest
+rate (unlimited wins); it is not a per-window traffic limit.
 
 `MOD` means left Alt or left Super/Command by default (`--shortcut-mod` changes it).
 

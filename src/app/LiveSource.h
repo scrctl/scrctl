@@ -20,6 +20,8 @@ class LiveSource final : public FrameSource {
         std::optional<RecordFormat> record_format;
         uint16_t wifi_port = 49152;
         bool hw_decode = false;
+        std::optional<uint64_t> video_bit_rate;
+        unsigned max_fps = 0;
         bool watch_display = true;
         bool want_video = true;
         bool decode_video = true;
