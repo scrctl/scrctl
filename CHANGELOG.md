@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.3.0 — 2026-10-30
+
+- Add `--video-bit-rate` / `-b` with decimal K/M suffixes to request a device video bitrate ceiling.
+- Add `--max-fps` to limit receiver image conversion/publication; device encoding and recording frame rates remain unchanged.
+- Preserve the first shared stream's bitrate and show warnings for differing requests.
+- Update the embedded XDeviceBridge client to 1.6.0. Default video behavior is unchanged.
+
 ## 1.2.0 — 2026-10-29
 
 - Update the embedded XDeviceBridge client to 1.4.0.
