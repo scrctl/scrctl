@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.3.1 — 2026-11-01
+
+- Keep macOS video windows at the picture aspect ratio when dragging their borders; update the constraint after rotation.
+- Redraw the uploaded frame during native window resizing, even before the main event loop resumes or a new frame arrives, avoiding a stretched old picture.
+- Fullscreen continues to fit the picture proportionally with borders where needed.
+
 ## 1.3.0 — 2026-10-30
 
 - Add `--video-bit-rate` / `-b` with decimal K/M suffixes to request a device video bitrate ceiling.
