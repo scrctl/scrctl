@@ -1247,6 +1247,35 @@ void presenter_device_rotation_shortcut() {
 
 // 暂停仅针对本机显示；以实际上传/回读像素区分 pause、re-pause 和 unpause，
 // 不借助生产状态 getter，也不构造停止 FrameSource 的替代实现。
+void presenter_resize_without_pump() {
+    KeyboardFixture f("Presenter nested resize redraw");
+    if (!f.window_id || !f.presenter.draw(f.frame)) return;
+    auto *window = SDL_GetWindowFromID(f.window_id);
+    auto *renderer = SDL_GetRenderer(window);
+    // Distort the window, as if the native resize loop had not returned yet.
+    SDL_SetWindowSize(window, 240, 120);
+    SDL_SetRenderDrawColor(renderer, 233, 5, 9, 255);
+    SDL_RenderClear(renderer);
+    SDL_RenderPresent(renderer);
+    SDL_Event event{};
+    event.type = SDL_WINDOWEVENT;
+    event.window.windowID = f.window_id;
+    event.window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
+    event.window.data1 = 240; event.window.data2 = 120;
+    SDL_PushEvent(&event);
+    // No Presenter::pump or new frame: the watch must redraw the uploaded frame.
+    int w = 0, h = 0;
+    SDL_GetRendererOutputSize(renderer, &w, &h);
+    std::vector<Uint32> pixels(static_cast<std::size_t>(w) * h);
+    const bool read = SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
+                                         pixels.data(), w * 4) == 0;
+    check(read && w == 240 && h == 120 &&
+              close(at(pixels.data(), w, 10, 60), {0, 0, 0}) &&
+              close(at(pixels.data(), w, 85, 5), kTopLeft) &&
+              close(at(pixels.data(), w, 155, 115), kBottomRight),
+          "缩放事件在主事件循环返回前重绘等比画面和留边");
+}
+
 void presenter_display_pause() {
     const Palette first{kTopLeft, kTopRight, kBottomRight, kBottomLeft};
     const Palette second{kBottomRight, kBottomLeft, kTopLeft, kTopRight};
@@ -3675,6 +3704,7 @@ int main() {
     }
 
     check(letterbox_and_readback(), "等比留边的边上涂的是 --background-color，且回读覆盖整块输出");
+    presenter_resize_without_pump();
     cropped_flip_pixels();
     presenter_source_size_changes();
     presenter_releases_touch_when_geometry_changes();

@@ -160,6 +160,10 @@ class Presenter {
     SDL_Window *window_ = nullptr;
     SDL_Renderer *renderer_ = nullptr;
     SDL_Texture *texture_ = nullptr;
+    static int SDLCALL resize_event_watch(void *userdata, SDL_Event *event);
+    SDL_threadID render_thread_ = 0;
+    bool resize_watch_active_ = false;
+    bool resize_repainting_ = false;
     bool physical_keyboard_mode_ = false;
     bool video_playback_ = true;
     bool texture_uploaded_ = false;

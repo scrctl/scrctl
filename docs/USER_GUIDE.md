@@ -125,6 +125,11 @@ Device rotation requires an app that supports rotation. It does not override the
 phone's orientation lock. Desktop rotation/flip affects display and touch mapping,
 not the device's encoded recording.
 
+On macOS, dragging a video window's border preserves the displayed picture's
+aspect ratio, including after rotation. Fullscreen fits the picture without
+stretching and may leave black borders. Resize events redraw the current frame
+even when no new video frame has arrived.
+
 ## Audio
 
 | Option | Behavior |

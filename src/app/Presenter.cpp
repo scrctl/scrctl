@@ -4,6 +4,7 @@
 #include "app/RenderPanel.h"
 #include "app/HidKeys.h"
 #include "app/WindowIcon.h"
+#include "app/WindowAspect.h"
 #include <algorithm>
 #include <cstdio>
 #include <cmath>
@@ -70,6 +71,7 @@ bool Presenter::open(int frame_w, int frame_h, const Crop &crop, int degrees, do
     }
 
     if (!open_window(spec)) return false;
+    set_window_aspect(window_, view_w_, view_h_);
     int out_w = 0, out_h = 0;
     SDL_GetRendererOutputSize(renderer_, &out_w, &out_h);
     // 纹理采用完整源帧尺寸，裁剪和缩放通过 RenderCopy 的 src/dst 矩形处理。
@@ -149,7 +151,28 @@ bool Presenter::open_window(const WindowSpec &spec) {
         std::fprintf(stderr, SCRCTL_TR("Failed to configure viewport: %s\n"), SDL_GetError());
         return false;
     }
+    // Cocoa/Windows can run a nested event loop while dragging a window border.
+    // Redraw the uploaded texture there, before the OS stretches the old surface.
+    render_thread_ = SDL_ThreadID();
+    SDL_AddEventWatch(resize_event_watch, this);
+    resize_watch_active_ = true;
     return true;
+}
+
+int SDLCALL Presenter::resize_event_watch(void *userdata, SDL_Event *event) {
+    auto &self = *static_cast<Presenter *>(userdata);
+    // SDL event watches may run on the producer's thread. Rendering is confined
+    // to the window's thread, and the guard prevents nested repaint callbacks.
+    if (SDL_ThreadID() != self.render_thread_ || self.resize_repainting_ ||
+        event->type != SDL_WINDOWEVENT || !self.window_ ||
+        event->window.windowID != SDL_GetWindowID(self.window_)) return 1;
+    if (event->window.event != SDL_WINDOWEVENT_SIZE_CHANGED &&
+        event->window.event != SDL_WINDOWEVENT_RESIZED) return 1;
+    self.resize_repainting_ = true;
+    const bool ok = self.video_playback_ ? self.draw_uploaded() : self.draw_background();
+    self.resize_repainting_ = false;
+    if (!ok) self.render_failed_ = true;
+    return 1;
 }
 
 bool Presenter::draw_background() {
@@ -894,6 +917,7 @@ bool Presenter::update_layout(const Crop &crop, int degrees, bool local,
         discard_queued_input();
     }
     if (width != view_w_ || height != view_h_) {
+        set_window_aspect(window_, width, height);
         if (is_windowed()) {
             const int old_w = resize_pending_ ? windowed_content_w_ : view_w_;
             const int old_h = resize_pending_ ? windowed_content_h_ : view_h_;
@@ -1100,6 +1124,7 @@ bool Presenter::release_buttons(const ButtonHandler &on_button, bool preserve_lo
 }
 
 Presenter::~Presenter() {
+    if (resize_watch_active_) SDL_DelEventWatch(resize_event_watch, this);
     if (texture_ != nullptr) {
         SDL_DestroyTexture(texture_);
     }

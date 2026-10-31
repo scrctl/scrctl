@@ -107,6 +107,11 @@ add_library(scrctl_app STATIC src/app/Application.cpp src/app/Commands.cpp src/a
     src/app/DeviceRotationJob.cpp src/app/AudioOut.cpp src/app/FileSource.cpp
     src/app/Cli.cpp src/app/LiveSource.cpp)
 target_link_libraries(scrctl_app PUBLIC scrctl_core Scrctl::SDL2 xdb_client nlohmann_json::nlohmann_json PRIVATE CLI11::CLI11)
+if(APPLE)
+    enable_language(OBJCXX)
+    target_sources(scrctl_app PRIVATE src/app/WindowAspect.mm)
+    target_link_libraries(scrctl_app PRIVATE "-framework AppKit")
+endif()
 target_compile_definitions(scrctl_app PRIVATE SCRCTL_VERSION_STRING="${PROJECT_VERSION}")
 include(cmake/WindowIcon.cmake)
 target_include_directories(scrctl_app PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
