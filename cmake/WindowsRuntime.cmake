@@ -6,11 +6,19 @@ endif()
 get_filename_component(scrctl_compiler_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
 set(SCRCTL_RUNTIME_DLL_DIRS "${scrctl_compiler_bindir}" CACHE STRING
     "Windows DLL search directories for installation")
-install(TARGETS scrctl
-    RUNTIME_DEPENDENCIES
-        DIRECTORIES ${SCRCTL_RUNTIME_DLL_DIRS}
-        PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
-        POST_EXCLUDE_REGEXES "[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]"
+install(TARGETS scrctl RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
+
+# sdl2-compat 在运行时主动加载 SDL3，PE 导入表里没有这项依赖。
+if(NOT SCRCTL_FETCH_SDL2 AND SDL2_LIBDIR AND EXISTS "${SDL2_LIBDIR}/pkgconfig/sdl2-compat.pc")
+    find_package(SDL3 REQUIRED CONFIG HINTS "${SDL2_LIBDIR}/cmake/SDL3")
+    install(IMPORTED_RUNTIME_ARTIFACTS SDL3::SDL3-shared
+        RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
+endif()
+
+install(RUNTIME_DEPENDENCY_SET scrctl_runtime
+    DIRECTORIES ${SCRCTL_RUNTIME_DLL_DIRS}
+    PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+    POST_EXCLUDE_REGEXES "[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\\\]"
     RUNTIME DESTINATION bin)
 
 install(FILES $<TARGET_FILE:xdb_client> DESTINATION bin)

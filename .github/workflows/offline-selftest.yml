@@ -237,6 +237,7 @@ jobs:
           compression-level: 0
           if-no-files-found: error
       - name: 检查独立安装目录
+        timeout-minutes: 2
         shell: pwsh
         run: ./tools/test_windows_install.ps1 -InstallDirectory dist-win -BuildDirectory build-win
       - name: 上传测试日志
