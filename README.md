@@ -81,6 +81,7 @@ releasing the mouse lifts both fingers. Older Servers keep single-finger mouse i
 
 ```sh
 scrctl --video-bit-rate=2M          # Request device video bitrate ceiling (-b 2M)
+scrctl --no-hw-decode               # Use software decoding for live video
 scrctl --max-fps=15                 # Receiver output limit; device encoding/recording unchanged
 scrctl --audio-buffer=200           # More buffering for uneven delivery
 scrctl --audio-dup                  # Keep sound on both device and computer

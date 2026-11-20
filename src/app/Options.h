@@ -81,9 +81,8 @@ struct Options {
     int record_orientation = 0;
     bool record_orientation_from_device = true; ///< 默认只采样起录方向，显式数字覆盖。
     int win_w = 0, win_h = 0; ///< --window-width/height：显式窗口尺寸，0=自动
-    /// 使用平台硬件解码后端。当前 VideoToolbox 适配的 2 字节 NAL 长度
-    /// 限制为 65535 字节，默认软件解码可处理更大的关键帧。
-    bool hw_decode = false;
+    bool hw_decode = false; ///< 兼容旧的显式硬解选项，包括本地回放。
+    bool software_decode = false; ///< --no-hw-decode 关闭实时流的硬解优先。
     std::optional<uint64_t> video_bit_rate; ///< bit/s；省略时沿用设备／共享视频的设置。
     unsigned max_fps = 0; ///< 接收端像素转换及发布上限；0 不限速。
     /// --no-audio 禁止建立音频会话和解码音频。

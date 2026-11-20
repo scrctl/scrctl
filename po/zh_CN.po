@@ -486,8 +486,8 @@ msgid "Run without a window"
 msgstr "无窗口运行"
 
 #: src/app/Cli.cpp:135
-msgid "Use platform hardware decoder; default: software"
-msgstr "使用平台硬件解码，默认软件解码"
+msgid "Use software decoding for live video"
+msgstr "实时视频使用软件解码"
 
 #: src/app/Cli.cpp:136
 msgid "Print input coordinates"

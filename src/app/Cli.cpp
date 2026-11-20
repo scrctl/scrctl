@@ -135,7 +135,9 @@ ParseResult parse_args(int argc, char **argv, Options &o) {
     app.add_flag("-N,--no-playback", no_playback,
                  SCRCTL_N_("Disable computer video and audio playback; keep selected recording tracks"));
     app.add_flag("--no-window", o.no_window, SCRCTL_N_("Run without a window"));
-    app.add_flag("--hw-decode", o.hw_decode, SCRCTL_N_("Use platform hardware decoder; default: software"));
+    app.add_flag("--hw-decode", o.hw_decode)->group("");
+    app.add_flag("--no-hw-decode", o.software_decode, SCRCTL_N_("Use software decoding for live video"))
+        ->excludes("--hw-decode");
     app.add_option_function<std::string>("-b,--video-bit-rate", [&](std::string value) {
         uint64_t multiplier = 1;
         if (!value.empty() && (value.back() == 'K' || value.back() == 'k' ||

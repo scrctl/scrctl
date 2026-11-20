@@ -72,6 +72,7 @@ xdb Server 1.3.0 或更新版本支持 `shared_control_sessions` 时，普通镜
 
 ```sh
 scrctl --video-bit-rate=2M          # 请求设备视频码率上限，也可写 -b 2M
+scrctl --no-hw-decode               # 实时视频使用软解
 scrctl --max-fps=15                 # 接收端输出限速，不改变手机编码或录制帧率
 scrctl --audio-buffer=200           # 增加缓冲，缓解传输抖动
 scrctl --audio-dup                  # 手机与电脑同时发声
