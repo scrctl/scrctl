@@ -217,8 +217,14 @@ if $PROGRAM_NAME == __FILE__
   abort "Usage: HOMEBREW_DEVELOPER=1 brew ruby #{$PROGRAM_NAME} INSTALL_DIRECTORY OUTPUT_DIRECTORY" unless ARGV.length == 2
   require "formula"
   require "formulary"
+  # Newer Homebrew resolves names and on-disk recipes through separate APIs.
+  loader = if Formulary.respond_to?(:from_path)
+    ->(path) { Formulary.from_path(path, :stable) }
+  else
+    ->(path) { Formulary.factory(path, :stable) }
+  end
   MacosSources.collect(ARGV[0], ARGV[1],
-    loader: ->(path) { Formulary.factory(path, :stable) },
+    loader: loader,
     brew_info: { "version" => HOMEBREW_VERSION,
                  "git_commit" => MacosSources.command("git", "-C", HOMEBREW_REPOSITORY.to_s, "rev-parse", "HEAD") })
 end
