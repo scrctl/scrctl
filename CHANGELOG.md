@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.4.0 — 2026-11-21
+
+- Update the embedded XDeviceBridge client to 1.7.0.
+- Prefer hardware decoding for live video through xdb Server. Use
+  `--no-hw-decode` to select software decoding.
+
 ## 1.3.1 — 2026-11-01
 
 - Keep macOS video windows at the picture aspect ratio when dragging their borders; update the constraint after rotation.

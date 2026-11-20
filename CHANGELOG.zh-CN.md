@@ -2,6 +2,11 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 1.4.0 — 2026-11-21
+
+- 内嵌 XDeviceBridge 客户端更新至 1.7.0。
+- 实时视频由 xdb Server 优先使用硬解，可通过 `--no-hw-decode` 选择软解。
+
 ## 1.3.1 — 2026-11-01
 
 - macOS 视频窗口拖动边框时保持画面比例，转屏后同步更新约束。
