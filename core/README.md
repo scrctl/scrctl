@@ -192,3 +192,11 @@ decoded frames and can play audio without initializing SDL video.
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
   python3 core/tests/device_cli_parity.py /opt/homebrew/bin/scrctl core/target/debug/scrctl
 ```
+
+Bounded video-only recording (`--no-window --no-audio --exit-after N -r FILE`)
+uses Rust for MP4, MKV and raw HEVC, including explicit `--record-format`.
+XDB still writes the file. The launcher checks `media.finish` before reporting
+success and closes the session even if finalization fails. Other recording
+forms, including audio tracks and custom orientation, still use the C++
+frontend. The loopback test checks RPC parameters and finalization order;
+it does not produce an actual media file.

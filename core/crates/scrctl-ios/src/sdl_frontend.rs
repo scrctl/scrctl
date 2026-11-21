@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use scrctl_ios::{AudioReader, Frame, Session};
+use scrctl_ios::{AudioReader, Frame, Session, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::{Event, WindowEvent};
 use sdl3::mouse::MouseButton;
@@ -37,6 +37,10 @@ struct Options {
     window_title: String,
     #[arg(long)]
     no_window: bool,
+    #[arg(short = 'r', long)]
+    record: Option<String>,
+    #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
+    record_format: Option<String>,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
@@ -52,6 +56,11 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
     .ok()?;
     // Unlimited interactive sessions still need the legacy shortcut set.
     if options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return None;
+    }
+    if options.record.as_deref().is_some_and(|path| {
+        path.is_empty() || !options.no_window || !options.no_audio || options.exit_after == 0
+    }) {
         return None;
     }
     Some(run(options))
@@ -259,21 +268,53 @@ impl Input {
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
     let mut events = sdl.event_pump()?;
-    let mut session = Session::open_target(
+    let absolute_recording = config
+        .record
+        .as_deref()
+        .map(std::path::absolute)
+        .transpose()?;
+    let recording = absolute_recording
+        .as_ref()
+        .map(|path| {
+            let path = path.to_str().ok_or("Recording path is not UTF-8")?;
+            let container = match config.record_format.as_deref() {
+                Some("mp4") => Some("mp4"),
+                Some("mkv") => Some("mkv"),
+                Some(_) => None,
+                None if path.to_ascii_lowercase().ends_with(".mp4") => Some("mp4"),
+                None if path.to_ascii_lowercase().ends_with(".mkv") => Some("mkv"),
+                None => None,
+            };
+            Ok::<_, &str>(VideoRecording { path, container })
+        })
+        .transpose()?;
+    let mut session = Session::open_video(
         0,
         &config.serial,
         "auto",
         &config.wifi,
         config.wifi_port,
         !config.no_hw_decode,
+        recording,
     )?;
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut frame = loop {
-        if let Some(frame) = session.next_frame(0, 20)? {
-            break frame;
+    let first_frame = (|| -> Result<Frame, Box<dyn Error>> {
+        loop {
+            if let Some(frame) = session.next_frame(0, 20)? {
+                return Ok(frame);
+            }
+            if Instant::now() >= deadline {
+                return Err("No first frame from XDB within five seconds".into());
+            }
         }
-        if Instant::now() >= deadline {
-            return Err("No first frame from XDB within five seconds".into());
+    })();
+    let mut frame = match first_frame {
+        Ok(frame) => frame,
+        Err(error) => {
+            if recording.is_some() {
+                let _ = session.finish_media();
+            }
+            return Err(error);
         }
     };
     if config.no_window {
@@ -419,7 +460,7 @@ fn run_headless(
     config: &Options,
 ) -> Result<(), Box<dyn Error>> {
     let mut playback = start_playback(sdl, &mut session, config);
-    let result = (|| -> Result<(), scrctl_ios::Error> {
+    let result = (|| -> Result<u64, scrctl_ios::Error> {
         let mut count = 1;
         let mut serial = first_frame.serial;
         drop(first_frame);
@@ -440,13 +481,19 @@ fn run_headless(
                 count += 1;
             }
         }
-        println!("Finished: processed {count} frames");
-        Ok(())
+        Ok(count)
     })();
     drop(playback);
+    let finish = if config.record.is_some() {
+        session.finish_media()
+    } else {
+        Ok(())
+    };
     let close = session.close();
-    result?;
+    let count = result?;
+    finish?;
     close?;
+    println!("Finished: processed {count} frames");
     Ok(())
 }
 

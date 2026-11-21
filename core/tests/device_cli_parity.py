@@ -30,6 +30,8 @@ for args, required in (
     (["--wifi", "auto", "--copy", "测试🙂", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--copy", "", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--no-window", "--no-audio", "--exit-after", "3"], ["video.start", "video.frame"]),
+    (["--no-window", "--no-audio", "--exit-after", "3", "--record", "capture.MKV"], ["recording.configure", "video.start", "media.finish"]),
+    (["--no-window", "--no-audio", "--exit-after", "3", "-r", "capture.mp4", "--record-format", "hevc"], ["video.start", "media.finish"]),
 ):
     observed = []
     for command in (legacy, launcher):
@@ -42,7 +44,7 @@ for args, required in (
             assert result.returncode == 0, result
             assert all(method in peer.methods() for method in required), peer.calls
             calls = [call for call in peer.calls if call[0] in required]
-            if "video.start" in required:
+            if "video.frame" in required:
                 calls = []  # The old video polling cadence differs.
             observed.append((result.stdout, result.stderr, calls))
     assert observed[0] == observed[1], (args, observed)

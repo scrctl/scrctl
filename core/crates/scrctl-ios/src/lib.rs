@@ -152,6 +152,12 @@ pub struct Frame {
     pub pixels: Vec<u8>,
 }
 
+#[derive(Clone, Copy)]
+pub struct VideoRecording<'a> {
+    pub path: &'a str,
+    pub container: Option<&'a str>,
+}
+
 pub struct Session {
     client: Client,
     open: bool,
@@ -177,6 +183,26 @@ impl Session {
         wifi_port: u16,
         hardware_decode: bool,
     ) -> Result<Self, Error> {
+        Self::open_video(
+            port,
+            udid,
+            transport,
+            wifi,
+            wifi_port,
+            hardware_decode,
+            None,
+        )
+    }
+
+    pub fn open_video(
+        port: u16,
+        udid: &str,
+        transport: &str,
+        wifi: &str,
+        wifi_port: u16,
+        hardware_decode: bool,
+        recording: Option<VideoRecording<'_>>,
+    ) -> Result<Self, Error> {
         let mut client = Client::connect(port)?;
         let mut params = json!({"udid": udid, "transport": transport});
         if !wifi.is_empty() {
@@ -190,10 +216,26 @@ impl Session {
             port,
             attachment: opened["attachment"].as_str().map(str::to_owned),
         };
-        session.client.request(
-            c"video.start",
-            json!({"decode": true, "hardware_decode": hardware_decode}),
-        )?;
+        let mut video = json!({"decode": true, "hardware_decode": hardware_decode});
+        if let Some(recording) = recording {
+            if let Some(format) = recording.container {
+                session.client.request(
+                    c"recording.configure",
+                    json!({
+                        "path": recording.path, "format": format, "video": true, "audio": false,
+                        "orientation": 0, "orientation_from_device": true,
+                    }),
+                )?;
+            } else {
+                video["record_path"] = json!(recording.path);
+            }
+        }
+        if let Err(error) = session.client.request(c"video.start", video) {
+            if recording.is_some() {
+                let _ = session.finish_media();
+            }
+            return Err(error);
+        }
         Ok(session)
     }
 
@@ -250,6 +292,10 @@ impl Session {
 }
 
 impl Session {
+    pub fn finish_media(&mut self) -> Result<(), Error> {
+        self.client.request(c"media.finish", json!({})).map(|_| ())
+    }
+
     pub fn close(mut self) -> Result<(), Error> {
         self.close_connection()
     }
