@@ -1,0 +1,110 @@
+name: Rust CLI installation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, ubuntu-26.04]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install sdl2 sdl3 ffmpeg pkg-config gettext
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build clang libclang-dev \
+            pkg-config gettext libsdl2-dev libsdl3-dev ffmpeg libavformat-dev \
+            libavcodec-dev libavutil-dev libswscale-dev
+      - name: Build and install
+        run: |
+          rustup update stable
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON
+          cmake --build build --parallel 4
+          cmake --install build --prefix dist-rust
+          mv dist-rust relocated-rust
+          test ! -e relocated-rust/bin/scrctl-legacy
+      - name: Verify relocated macOS library closure
+        if: runner.os == 'macOS'
+        run: python3 tools/test_macos_install.py relocated-rust build
+      - name: Verify native CLI and media paths
+        env:
+          SCRCTL_TEST_NATIVE_OPTIONS: '1'
+        run: |
+          unset DYLD_LIBRARY_PATH LD_LIBRARY_PATH
+          python3 core/tests/cli_parity.py build/scrctl relocated-rust/bin/scrctl
+          python3 core/tests/cli_targets.py relocated-rust/bin/scrctl
+          python3 core/tests/sdl_playback.py relocated-rust/bin/scrctl
+          python3 core/tests/file_cli_parity.py build/scrctl relocated-rust/bin/scrctl
+  install-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            msystem: CLANG64
+            prefix: mingw-w64-clang-x86_64
+            machine: AMD64
+          - runner: windows-11-arm
+            msystem: CLANGARM64
+            prefix: mingw-w64-clang-aarch64
+            machine: ARM64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          cache: ${{ matrix.machine != 'ARM64' }}
+          install: >-
+            git
+            ${{ matrix.prefix }}-clang
+            ${{ matrix.prefix }}-cmake
+            ${{ matrix.prefix }}-ninja
+            ${{ matrix.prefix }}-rust
+            ${{ matrix.prefix }}-gettext-tools
+            ${{ matrix.prefix }}-sdl3
+            ${{ matrix.prefix }}-sdl2-compat
+            ${{ matrix.prefix }}-ffmpeg
+            ${{ matrix.prefix }}-python
+            ${{ matrix.prefix }}-pkgconf
+      - name: Build and install Windows package
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+          cmake --build build --parallel 4
+          cmake --install build --prefix dist-rust
+          test ! -e dist-rust/bin/scrctl-legacy.exe
+          llvm-readobj --file-headers dist-rust/bin/scrctl.exe | grep -F 'IMAGE_FILE_MACHINE_${{ matrix.machine }}'
+      - name: Verify relocated Windows package with system PATH
+        shell: pwsh
+        run: ./tools/test_windows_install.ps1 -InstallDirectory dist-rust -BuildDirectory build
+      - name: Verify native Windows media paths
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          python core/tests/cli_targets.py dist-rust/bin/scrctl.exe
+          python core/tests/sdl_playback.py dist-rust/bin/scrctl.exe
+          python core/tests/file_cli_parity.py build/scrctl.exe dist-rust/bin/scrctl.exe

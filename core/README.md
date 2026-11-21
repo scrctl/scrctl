@@ -235,23 +235,14 @@ and bundled libraries locally. The C++ comparison executable stays in the
 build directory.
 
 ```sh
-cmake -S . -B build-candidate
+cmake -S . -B build-candidate -DSCRCTL_BUILD_RUST_FRONTEND=ON
 cmake --build build-candidate
-XDB_LIB_DIR="$PWD/build-candidate/xdb" cargo rustc --manifest-path core/Cargo.toml \
-  -p scrctl-cli --bin scrctl --release --features sdl3,ffmpeg-next --locked -- \
-  -C link-arg=-Wl,-headerpad_max_install_names \
-  -C "link-arg=-Wl,-rpath,$PWD/build-candidate/xdb"
-cmake -B build-candidate -DSCRCTL_RUST_FRONTEND="$PWD/core/target/release/scrctl"
 cmake --install build-candidate --prefix "$PWD/dist-candidate"
 python3 tools/test_macos_install.py dist-candidate build-candidate
 ```
 
-On Linux, link the candidate with `-C 'link-arg=-Wl,-rpath,$ORIGIN/lib'`
-and use the same `SCRCTL_RUST_FRONTEND` option. The installed client uses
-the bundled XDB client under `bin/lib`. Provide compatible SDL3 and FFmpeg
-shared libraries through the system package manager. On Windows, build
-`scrctl.exe` for the same architecture as the C++ and XDB client builds.
-Configure with `SCRCTL_RUST_FRONTEND` pointing to that executable and include
-the native dependency directories in `SCRCTL_RUNTIME_DLL_DIRS`. CMake
-scans and packages the imports of the Rust executable. These platform paths
-require separate native package validation.
+The same CMake option works on Linux and Windows with their native toolchains.
+Linux uses system SDL3 and FFmpeg and installs the bundled XDB client under
+`bin/lib`. Windows resolves the executable's DLL dependencies using the
+native toolchain directories. If using a prebuilt binary, pass its absolute
+path in `SCRCTL_RUST_FRONTEND` instead.

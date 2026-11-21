@@ -137,12 +137,7 @@ if(SCRCTL_BUILD_TESTS)
     target_link_libraries(annexb_test PRIVATE scrctl_core)
     add_test(NAME annexb COMMAND annexb_test)
 endif()
-# Select the native Rust executable for the 2.0 install tree.
-# The C++ executable remains available to build-tree regression tests.
-set(SCRCTL_RUST_FRONTEND "" CACHE FILEPATH "Prebuilt native Rust scrctl executable")
-if(SCRCTL_RUST_FRONTEND AND NOT EXISTS "${SCRCTL_RUST_FRONTEND}")
-    message(FATAL_ERROR "SCRCTL_RUST_FRONTEND does not exist: ${SCRCTL_RUST_FRONTEND}")
-endif()
+include(cmake/RustFrontend.cmake)
 if(WIN32)
     include(cmake/WindowsRuntime.cmake)
 elseif(APPLE)
