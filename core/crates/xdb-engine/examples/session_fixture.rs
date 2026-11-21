@@ -15,6 +15,12 @@ fn main() -> Result<(), Error> {
             if code == "operation_failed" && message == "Video unavailable"));
         return Ok(());
     }
+    if scenario == "unsupported-ios" {
+        assert!(
+            matches!(session, Err(Error::Server { message, .. }) if message.contains("requires iOS"))
+        );
+        return Ok(());
+    }
     let mut session = session?;
     if scenario == "bad-frame" {
         assert!(

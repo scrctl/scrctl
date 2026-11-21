@@ -192,6 +192,7 @@ pub struct VideoOptions<'a> {
     pub max_fps: u16,
     pub skip_video: bool,
     pub screenshots: bool,
+    pub allow_screenshot_fallback: bool,
 }
 
 pub struct Session {
@@ -305,7 +306,10 @@ impl Session {
         {
             match session.client.request(c"video.start", video) {
                 Err(Error::Server { message, .. })
-                    if decode && recording.is_none() && message.contains("requires iOS") =>
+                    if options.allow_screenshot_fallback
+                        && decode
+                        && recording.is_none()
+                        && message.contains("requires iOS") =>
                 {
                     session.screenshots = true;
                 }

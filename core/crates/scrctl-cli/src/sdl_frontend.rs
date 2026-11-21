@@ -1289,6 +1289,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
             max_fps: config.max_fps.unwrap_or_default(),
             skip_video: config.no_video,
             screenshots: config.video_source.as_deref() == Some("screenshot"),
+            allow_screenshot_fallback: true,
         },
     )?;
     let mut source = FrameSource::new(

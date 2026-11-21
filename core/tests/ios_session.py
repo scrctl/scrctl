@@ -10,8 +10,17 @@ sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
 
+class StartupErrorServer(FakeServer):
+    def handle_call(self, name, params):
+        result, data = super().handle_call(name, params)
+        if name == "video.start":
+            raise ValueError("Video requires iOS 17 or later")
+        return result, data
+
+
 def run(executable, scenario):
-    with FakeServer() as server:
+    fixture = StartupErrorServer if scenario == "unsupported-ios" else FakeServer
+    with fixture() as server:
         server.no_video = scenario == "start-error"
         server.bad_frame = scenario == "bad-frame"
         subprocess.run(
@@ -22,7 +31,7 @@ def run(executable, scenario):
             ("connection.open", {"udid": "mock-iphone", "transport": "wifi"}),
             ("video.start", {"decode": True, "hardware_decode": False}),
         ]
-        if scenario != "start-error":
+        if scenario not in ("start-error", "unsupported-ios"):
             expected.append(("video.frame", {"since": 0, "timeout_ms": 100}))
         if scenario == "success":
             expected.extend([
@@ -36,5 +45,5 @@ def run(executable, scenario):
         print(f"PASS {scenario}")
 
 
-for scenario in ("success", "start-error", "bad-frame"):
+for scenario in ("success", "start-error", "unsupported-ios", "bad-frame"):
     run(sys.argv[1], scenario)

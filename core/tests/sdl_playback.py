@@ -59,6 +59,26 @@ for extra in (["--video-source", "screenshot"], ["--test-degrade", "0,0.15"]):
 print("PASS explicit screenshots and forced degradation followed by video recovery")
 
 
+class UnsupportedVideoServer(FakeServer):
+    def handle_call(self, name, params):
+        result, data = super().handle_call(name, params)
+        if name == "video.start":
+            raise ValueError("Video requires iOS 17 or later")
+        return result, data
+
+
+with UnsupportedVideoServer() as peer:
+    env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+               SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+    result = subprocess.run(
+        [sys.argv[1], "--exit-after", "3"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0 and "processed 3 frames" in result.stdout, result
+    assert "screenshot" in peer.methods() and "audio.start" not in peer.methods()
+print("PASS CLI screenshot fallback when streaming requires a newer iOS")
+
+
 with FakeServer() as peer, TemporaryDirectory() as directory:
     env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
                SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
