@@ -36,3 +36,14 @@ with TemporaryDirectory() as directory:
     )
     assert windowed.returncode == 0 and b"processed 3 frames" in windowed.stdout, windowed
     print("PASS SDL3 dummy window playback")
+
+    if sys.platform == "darwin" and os.getenv("SCRCTL_TEST_HW_DECODE") == "1":
+        args = ["--no-window", "--play", str(clip), "--hw-decode"]
+        old, new = (subprocess.run([exe, *args], env=env, capture_output=True, timeout=15)
+                    for exe in (legacy, rust))
+        assert (old.returncode, old.stdout, old.stderr) == (0, new.stdout, new.stderr), (old, new)
+        assert new.returncode == 0, new
+        windowed = subprocess.run([rust, "--play", str(clip), "--hw-decode", "--exit-after", "3"],
+                                  env=env, capture_output=True, timeout=15)
+        assert windowed.returncode == 0 and b"processed 3 frames" in windowed.stdout, windowed
+        print("PASS VideoToolbox hardware frames and SDL3 texture upload")

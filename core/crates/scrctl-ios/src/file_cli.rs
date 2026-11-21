@@ -20,6 +20,8 @@ struct Options {
     play: PathBuf,
     #[arg(long)]
     no_window: bool,
+    #[arg(long)]
+    hw_decode: bool,
     #[arg(long, visible_alias = "title", default_value = "scrctl")]
     window_title: String,
     #[arg(long, default_value_t = 0)]
@@ -55,7 +57,15 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     av::init()?;
     av::util::log::set_level(av::util::log::Level::Quiet);
     println!("Playing file: {}", path.display());
-    println!("Decoder backend: libavcodec/hevc");
+    let hardware = cfg!(target_os = "macos") && options.hw_decode;
+    println!(
+        "Decoder backend: {}",
+        if hardware {
+            "VideoToolbox"
+        } else {
+            "libavcodec/hevc"
+        }
+    );
 
     // Keep the local playback contract restricted to Annex-B HEVC.
     let parameter_error = "Playback file has no complete HEVC parameter sets";
@@ -68,9 +78,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         .best(av::media::Type::Video)
         .ok_or(parameter_error)?;
     let stream_index = stream.index();
-    let mut decoder = av::codec::context::Context::from_parameters(stream.parameters())?
-        .decoder()
-        .video()?;
+    let mut context = av::codec::context::Context::from_parameters(stream.parameters())?;
+    #[cfg(target_os = "macos")]
+    if hardware {
+        enable_videotoolbox(&mut context)?;
+    }
+    let mut decoder = context.decoder().video()?;
 
     let sdl = sdl3::init()?;
     let mut events = sdl.event_pump()?;
@@ -133,7 +146,21 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             Err(error) => return Err(error.into()),
         }
 
+        if hardware && frame.format() != av::format::Pixel::VIDEOTOOLBOX {
+            return Err("VideoToolbox did not return a hardware frame".into());
+        }
         if let (Some(canvas), Some(creator)) = (&mut canvas, &creator) {
+            if hardware {
+                let mut software = av::frame::Video::empty();
+                // Transfer the hardware surface while the input frame is alive.
+                let status = unsafe {
+                    av::ffi::av_hwframe_transfer_data(software.as_mut_ptr(), frame.as_ptr(), 0)
+                };
+                if status < 0 {
+                    return Err(av::Error::from(status).into());
+                }
+                frame = software;
+            }
             let (width, height) = (frame.width(), frame.height());
             let format = (frame.format(), width, height);
             if source_format != Some(format) {
@@ -185,4 +212,42 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     }
     println!("Finished: processed {count} frames");
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn enable_videotoolbox(context: &mut av::codec::context::Context) -> Result<(), av::Error> {
+    use av::ffi::{AVCodecContext, AVHWDeviceType, AVPixelFormat};
+    use std::ptr;
+
+    unsafe extern "C" fn select_format(
+        _: *mut AVCodecContext,
+        mut formats: *const AVPixelFormat,
+    ) -> AVPixelFormat {
+        // Libavcodec provides a list terminated by AV_PIX_FMT_NONE.
+        while unsafe { *formats } != AVPixelFormat::AV_PIX_FMT_NONE {
+            if unsafe { *formats } == AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX {
+                return AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX;
+            }
+            formats = unsafe { formats.add(1) };
+        }
+        AVPixelFormat::AV_PIX_FMT_NONE
+    }
+
+    // The unopened context owns this AVBufferRef and releases it on drop.
+    let status = unsafe {
+        let raw = context.as_mut_ptr();
+        (*raw).get_format = Some(select_format);
+        av::ffi::av_hwdevice_ctx_create(
+            &mut (*raw).hw_device_ctx,
+            AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+            ptr::null(),
+            ptr::null_mut(),
+            0,
+        )
+    };
+    if status < 0 {
+        Err(av::Error::from(status))
+    } else {
+        Ok(())
+    }
 }

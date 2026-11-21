@@ -164,7 +164,7 @@ and shutdown release active input.
 Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
 subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
 default to C++ while its shortcuts, multi-touch and window behavior are
-being ported. Advanced recording modes, hardware file playback, advanced window controls (including fullscreen/crop options),
+being ported. Advanced recording options, advanced window controls (including fullscreen/crop options),
 and other unrecognized option combinations also use the legacy frontend.
 
 ```sh
@@ -197,10 +197,13 @@ Bounded video-only recording (`--no-window --no-audio --exit-after N -r FILE`)
 uses Rust for MP4, MKV and raw HEVC, including explicit `--record-format`.
 XDB still writes the file. The launcher checks `media.finish` before reporting
 success and closes the session even if finalization fails.
-The same bounded headless path captures audio in MP4/MKV unless
-`--no-audio` is set. `--no-audio-playback` captures encoded AAC without opening
-SDL audio or requesting PCM. Audio-only, unlimited, windowed and custom
-orientation recording still use the C++ frontend. The loopback test checks RPC parameters and finalization order;
+MP4/MKV capture audio unless `--no-audio` is set. `--no-audio-playback`
+captures encoded AAC without opening SDL audio or requesting PCM.
+Recording also supports a window, audio-only MP4/MKV (`--no-video`), an
+explicit `--record-orientation` of 0/90/180/270, and an unlimited run
+with normal exit or `--time-limit` for finalization. Headless recording
+without a frame limit avoids video decode. The combined `--orientation`
+option still uses the legacy frontend. The loopback test checks RPC parameters and finalization order;
 it does not produce an actual media file.
 
 
@@ -208,9 +211,11 @@ it does not produce an actual media file.
 
 Build with `--features sdl3,ffmpeg-next` to run software Annex-B HEVC playback
 through Rust and the existing system FFmpeg libraries. The supported options
-are `--play`, `--no-window`, `--title` / `--window-title` and `--exit-after`.
-Hardware decoding and additional playback/geometry options use the C++
-frontend. Run the parity check from the repository root:
+are `--play`, `--no-window`, `--title` / `--window-title`, `--exit-after`
+and `--hw-decode`. On macOS the latter uses VideoToolbox and requires an
+actual hardware frame. On Linux and Windows it retains the legacy local
+file decoder's software behavior. Additional playback/geometry options
+use the C++ frontend. Run the parity check from the repository root:
 
 ```sh
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
@@ -219,3 +224,5 @@ DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
 
 The test creates an Annex-B sample with FFmpeg's executable and libx265.
 Normal Rust playback links the FFmpeg libraries directly.
+
+Set `SCRCTL_TEST_HW_DECODE=1` to include the macOS hardware playback checks.
