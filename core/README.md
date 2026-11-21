@@ -65,3 +65,48 @@ cargo build --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --locked
 python3 core/tests/cli_targets.py core/target/debug/scrctl
 python3 core/tests/cli_parity.py /path/to/legacy/scrctl core/target/debug/scrctl
 ```
+
+## Optional XDB GUI bindings
+
+The default `rfb-ffi` build exports the existing VNC and Mac Screen Sharing
+API. Enable `rfb-ffi/xdb` for the additional iOS-device API. Generate Swift
+and Kotlin from the same feature-enabled library used by your app.
+
+```sh
+(
+  cd core
+  XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib cargo build -p rfb-ffi --features xdb --locked
+  cargo run -p rfb-ffi-bindgen --locked -- \
+    generate --library target/debug/librfb_ffi.dylib \
+    --language swift --language kotlin --out-dir target/gui-bindings --no-format
+)
+```
+
+- `ios_list_devices` returns the XDB `devices` result JSON, including all
+  candidates and discovery warnings. Select a non-empty UDID to open.
+- `IosSession.open` starts decoded video for the selected device over
+  auto, USB, or Wi-Fi. The port selects the **local** XDB Server. Zero
+  uses XDB's default resolution on the host.
+- `next_frame` returns owned BGRA bytes, pixel dimensions, row pitch, the
+  frame serial, and optional display size and orientation. Pass the last
+  accepted serial on subsequent calls. A no-frame response yields nil/null.
+  The wait argument is clamped to 1000 ms and bounds the server's frame
+  wait. It does not impose an end-to-end socket deadline.
+- `touch` takes normalized device coordinates and a press/release flag.
+  `keyboard` takes the current set of USB HID key usages (empty releases all).
+  Call `shutdown` explicitly for an observable shutdown result. After closing,
+  session methods report `IosError.Closed`.
+- Calls are synchronous and serialized per session. Run them off the UI thread.
+  Use short frame waits so input and close can run between frame requests.
+
+On macOS the feature links the shared XDB client, with XDB Server installed
+on the Mac. With a Rust static library, the app still needs to link and
+provide the shared XDB client. For Android, use an ABI-matched NDK build of
+`libxdb_client.so` and package it alongside the Rust JNI library. The Android
+host must start an embedded `libxdb_server.so` via XDB's server API and pass its
+actual loopback port. The binding does not start or own an embedded server.
+Android packaging and device acceptance are follow-up integration work.
+
+Apple iOS/iPadOS currently use the RFB-only feature set. XDB 1.7.0 has no
+validated iOS host build or app embedding target. Neither binding connects
+to an XDB Server on a different host.

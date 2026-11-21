@@ -1926,6 +1926,7 @@ dependencies = [
  "rfb-engine",
  "rfb-io",
  "rfb-openvpn",
+ "scrctl-ios",
  "thiserror",
  "tokio",
  "uniffi",

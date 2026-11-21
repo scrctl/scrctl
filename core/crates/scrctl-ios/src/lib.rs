@@ -55,6 +55,10 @@ fn last_error() -> Error {
 }
 
 struct Client(NonNull<c_void>);
+// A client owns its socket and has no event callback or thread-affine state.
+// Exclusive Rust access serializes all SDK calls, including destruction.
+unsafe impl Send for Client {}
+
 struct Response(NonNull<c_void>);
 
 impl Drop for Client {
@@ -121,6 +125,17 @@ impl Client {
     }
 }
 
+pub fn devices(port: u16, transport: &str, timeout_ms: u32) -> Result<Value, Error> {
+    let mut client = Client::connect(port)?;
+    let (devices, _) = client.request(
+        c"devices",
+        json!({
+            "transport": transport, "timeout_ms": timeout_ms,
+        }),
+    )?;
+    Ok(devices)
+}
+
 pub struct Frame {
     pub serial: u64,
     pub width: u32,
@@ -132,6 +147,7 @@ pub struct Frame {
 
 pub struct Session {
     client: Client,
+    open: bool,
 }
 
 impl Session {
@@ -146,7 +162,7 @@ impl Session {
             c"connection.open",
             json!({"udid": udid, "transport": transport}),
         )?;
-        let mut session = Self { client };
+        let mut session = Self { client, open: true };
         session.client.request(
             c"video.start",
             json!({"decode": true, "hardware_decode": hardware_decode}),
@@ -206,8 +222,23 @@ impl Session {
     }
 }
 
+impl Session {
+    pub fn close(mut self) -> Result<(), Error> {
+        self.close_connection()
+    }
+
+    fn close_connection(&mut self) -> Result<(), Error> {
+        if !std::mem::replace(&mut self.open, false) {
+            return Ok(());
+        }
+        self.client
+            .request(c"connection.close", json!({}))
+            .map(|_| ())
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
-        let _ = self.client.request(c"connection.close", json!({}));
+        let _ = self.close_connection();
     }
 }
