@@ -11,10 +11,10 @@ repository.workspace = true
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [features]
-xdb = ["dep:scrctl-ios"]
+xdb = ["dep:xdb-engine"]
 
 [dependencies]
-scrctl-ios = { path = "../scrctl-ios", features = ["xdb"], optional = true }
+xdb-engine = { path = "../xdb-engine", features = ["xdb"], optional = true }
 rfb-codec = { path = "../rfb-codec" }
 rfb-engine = { path = "../rfb-engine" }
 rfb-io = { path = "../rfb-io" }

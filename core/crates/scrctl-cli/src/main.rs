@@ -122,10 +122,10 @@ fn discovery_timeout(args: &[OsString]) -> Option<u32> {
 #[cfg(feature = "xdb")]
 fn list_devices(timeout: u32) -> i32 {
     use std::io::Write;
-    let result = scrctl_ios::devices(0, "auto", timeout);
+    let result = xdb_engine::devices(0, "auto", timeout);
     let result = match result {
         Ok(result) => result,
-        Err(scrctl_ios::Error::Server { message, .. } | scrctl_ios::Error::Client(message)) => {
+        Err(xdb_engine::Error::Server { message, .. } | xdb_engine::Error::Client(message)) => {
             eprintln!("{message}");
             return 1;
         }

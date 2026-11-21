@@ -1,5 +1,5 @@
 [package]
-name = "scrctl-ios"
+name = "xdb-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

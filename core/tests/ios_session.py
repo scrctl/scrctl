@@ -1,10 +1,12 @@
 """Exercise the Rust session through the real client ABI and a loopback XDB fixture."""
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(root / "xdb" / "tests" / "support"))
+fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
+sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
 

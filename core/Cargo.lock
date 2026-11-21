@@ -2052,10 +2052,10 @@ dependencies = [
  "rfb-engine",
  "rfb-io",
  "rfb-openvpn",
- "scrctl-ios",
  "thiserror",
  "tokio",
  "uniffi",
+ "xdb-engine",
 ]
 
 [[package]]
@@ -2366,17 +2366,10 @@ dependencies = [
  "clap",
  "ffmpeg-next",
  "rfb-engine",
- "scrctl-ios",
  "sdl3",
  "serde_json",
  "tokio",
-]
-
-[[package]]
-name = "scrctl-ios"
-version = "0.1.0"
-dependencies = [
- "serde_json",
+ "xdb-engine",
 ]
 
 [[package]]
@@ -3414,12 +3407,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "xdb-engine"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "xdb-ffi"
 version = "0.1.0"
 dependencies = [
- "scrctl-ios",
  "thiserror",
  "uniffi",
+ "xdb-engine",
 ]
 
 [[package]]

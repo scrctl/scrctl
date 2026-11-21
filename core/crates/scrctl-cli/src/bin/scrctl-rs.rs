@@ -31,14 +31,14 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-fn run(args: Args) -> Result<(), scrctl_ios::Error> {
+fn run(args: Args) -> Result<(), xdb_engine::Error> {
     let transport = match args.transport {
         Transport::Auto => "auto",
         Transport::Usb => "usb",
         Transport::Wifi => "wifi",
     };
     let mut session =
-        scrctl_ios::Session::open(args.xdb_port, &args.serial, transport, !args.no_hw_decode)?;
+        xdb_engine::Session::open(args.xdb_port, &args.serial, transport, !args.no_hw_decode)?;
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         if let Some(frame) = session.next_frame(0, 100)? {
@@ -49,7 +49,7 @@ fn run(args: Args) -> Result<(), scrctl_ios::Error> {
             return Ok(());
         }
     }
-    Err(scrctl_ios::Error::Client(
+    Err(xdb_engine::Error::Client(
         "No iOS frame within five seconds".into(),
     ))
 }

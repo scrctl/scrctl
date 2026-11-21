@@ -5,7 +5,8 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(root / "xdb" / "tests" / "support"))
+fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
+sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
 legacy, launcher = sys.argv[1:]

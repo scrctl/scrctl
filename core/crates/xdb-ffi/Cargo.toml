@@ -12,10 +12,10 @@ publish = false
 crate-type = ["cdylib", "staticlib", "lib"]
 
 [features]
-xdb = ["dep:scrctl-ios", "dep:thiserror", "dep:uniffi"]
+xdb = ["dep:xdb-engine", "dep:thiserror", "dep:uniffi"]
 
 [dependencies]
-scrctl-ios = { path = "../scrctl-ios", features = ["xdb"], optional = true }
+xdb-engine = { path = "../xdb-engine", features = ["xdb"], optional = true }
 thiserror = { version = "2", optional = true }
 uniffi = { version = "0.32", optional = true }
 

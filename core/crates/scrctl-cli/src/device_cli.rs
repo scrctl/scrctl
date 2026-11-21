@@ -1,6 +1,6 @@
 use clap::Parser;
-use scrctl_ios::{DdiOptions, Error};
 use std::ffi::OsString;
+use xdb_engine::{DdiOptions, Error};
 
 #[derive(Parser)]
 #[command(disable_help_flag = true)]
@@ -80,7 +80,7 @@ pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
     }
 
     let result = if options.pair {
-        scrctl_ios::pair_device(
+        xdb_engine::pair_device(
             &options.serial,
             !options.wifi.is_empty(),
             options.repair_pairing,
@@ -90,7 +90,7 @@ pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
     } else if ddi {
         run_ddi(&options)
     } else if options.list_apps || options.copy.is_some() || options.paste {
-        scrctl_ios::device_commands(
+        xdb_engine::device_commands(
             0,
             &options.serial,
             &options.wifi,
@@ -130,10 +130,10 @@ fn run_ddi(options: &Options) -> Result<(), Error> {
         download_timeout: options.ddi_download_timeout.unwrap_or(300),
     };
     if options.install_ddi {
-        scrctl_ios::install_ddi(ddi, options.replace_ddi, options.ddi_install_timeout)?;
+        xdb_engine::install_ddi(ddi, options.replace_ddi, options.ddi_install_timeout)?;
         println!("DDI prepared by xdb");
     } else {
-        let value = scrctl_ios::download_ddi(
+        let value = xdb_engine::download_ddi(
             ddi,
             options.ddi_system_version.as_deref(),
             options.ddi_product_type.as_deref().unwrap_or(""),

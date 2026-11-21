@@ -5,7 +5,6 @@ use std::time::{Duration, Instant};
 
 use crate::diagnostics::Diagnostics;
 use clap::{CommandFactory, FromArgMatches, Parser};
-use scrctl_ios::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::{Mod, Scancode};
@@ -14,6 +13,7 @@ use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
 use sdl3::render::FRect;
 use sdl3::sys::render::SDL_LOGICAL_PRESENTATION_STRETCH;
+use xdb_engine::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 
 #[derive(Parser)]
 struct Options {
@@ -344,7 +344,7 @@ impl<'a> FrameSource<'a> {
         &mut self,
         session: &mut Session,
         timeout: u16,
-    ) -> Result<Option<Frame>, scrctl_ios::Error> {
+    ) -> Result<Option<Frame>, xdb_engine::Error> {
         let now = Instant::now();
         if now >= self.next_status {
             self.video_unusable = session.media_status()?["video_unusable"] == true;
@@ -796,7 +796,7 @@ fn shortcut(event: &Event, shortcut_mods: Mod) -> Option<Shortcut> {
 
 struct PendingPaste {
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    result: std::sync::mpsc::Receiver<Result<(), scrctl_ios::Error>>,
+    result: std::sync::mpsc::Receiver<Result<(), xdb_engine::Error>>,
     until: Instant,
 }
 
@@ -806,7 +806,7 @@ impl PendingPaste {
             .store(true, std::sync::atomic::Ordering::Release);
     }
 
-    fn start(session: &Session, text: String) -> Result<Self, scrctl_ios::Error> {
+    fn start(session: &Session, text: String) -> Result<Self, xdb_engine::Error> {
         let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let result = session.prepare_clipboard(text, cancelled.clone())?;
         Ok(Self {
@@ -933,7 +933,7 @@ impl Input {
         x: i32,
         y: i32,
         down: bool,
-    ) -> Result<(), scrctl_ios::Error> {
+    ) -> Result<(), xdb_engine::Error> {
         if let Some((invert_x, invert_y)) = self.virtual_axes {
             let center = geometry.area.center();
             let x = if invert_x {
@@ -965,7 +965,7 @@ impl Input {
         event: Event,
         geometry: Geometry,
         window_size: (u32, u32),
-    ) -> Result<(), scrctl_ios::Error> {
+    ) -> Result<(), xdb_engine::Error> {
         if !enabled {
             return Ok(());
         }

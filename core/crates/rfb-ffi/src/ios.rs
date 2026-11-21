@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use scrctl_ios::Session;
+use xdb_engine::Session;
 
 #[derive(Clone, Copy, uniffi::Enum)]
 pub enum IosTransport {
@@ -29,11 +29,11 @@ pub enum IosError {
     Closed,
 }
 
-impl From<scrctl_ios::Error> for IosError {
-    fn from(error: scrctl_ios::Error) -> Self {
+impl From<xdb_engine::Error> for IosError {
+    fn from(error: xdb_engine::Error) -> Self {
         match error {
-            scrctl_ios::Error::Client(message) => Self::Client { detail: message },
-            scrctl_ios::Error::Server { code, message } => Self::Server {
+            xdb_engine::Error::Client(message) => Self::Client { detail: message },
+            xdb_engine::Error::Server { code, message } => Self::Server {
                 code,
                 detail: message,
             },
@@ -60,7 +60,7 @@ pub fn ios_list_devices(
     transport: IosTransport,
     timeout_ms: u32,
 ) -> Result<String, IosError> {
-    Ok(scrctl_ios::devices(port, transport.name(), timeout_ms.min(60_000))?.to_string())
+    Ok(xdb_engine::devices(port, transport.name(), timeout_ms.min(60_000))?.to_string())
 }
 
 #[derive(uniffi::Object)]
@@ -71,7 +71,7 @@ pub struct IosSession {
 impl IosSession {
     fn with_session<T>(
         &self,
-        call: impl FnOnce(&mut Session) -> Result<T, scrctl_ios::Error>,
+        call: impl FnOnce(&mut Session) -> Result<T, xdb_engine::Error>,
     ) -> Result<T, IosError> {
         let mut guard = self.session.lock().map_err(|_| IosError::Closed)?;
         Ok(call(guard.as_mut().ok_or(IosError::Closed)?)?)

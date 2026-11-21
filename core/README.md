@@ -8,7 +8,7 @@ surface and bindgen crate remain the entry points for VNC and Mac Screen Sharing
 cargo test --manifest-path core/Cargo.toml --workspace --locked
 ```
 
-The separate `scrctl-ios` crate has an opt-in `xdb` feature. It links the
+The separate `xdb-engine` crate has an opt-in `xdb` feature. It links the
 XDeviceBridge client shared library and uses the existing local XDB Server.
 Set `XDB_LIB_DIR` to the directory containing that library at build time and
 make it visible to the platform loader at runtime. For example, on macOS with
@@ -27,7 +27,7 @@ The iOS crate currently has no UniFFI exports.
 ## CLI compatibility during migration
 
 The `scrctl-cli` crate owns the `scrctl` executable, target dispatch,
-and SDL frontend. It uses `scrctl-ios` for device sessions. Unsupported
+and SDL frontend. It uses `xdb-engine` for device sessions. Unsupported
 iOS argument combinations still use the existing C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
 binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
 Windows). Keep the original frontend's runtime libraries beside it. The
@@ -37,7 +37,7 @@ Run the iOS session regression against the XDB loopback fixture without a phone.
 On macOS, reuse the library path from the example above:
 
 ```sh
-cargo build --manifest-path core/Cargo.toml -p scrctl-ios --features xdb --example session_fixture --locked
+cargo build --manifest-path core/Cargo.toml -p xdb-engine --features xdb --example session_fixture --locked
 DYLD_LIBRARY_PATH="$XDB_LIB_DIR" python3 core/tests/ios_session.py core/target/debug/examples/session_fixture
 ```
 

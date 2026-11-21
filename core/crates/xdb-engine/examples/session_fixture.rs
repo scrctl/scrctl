@@ -1,5 +1,5 @@
 // Drives the public session API against the local XDB test peer.
-use scrctl_ios::{Error, Session};
+use xdb_engine::{Error, Session};
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args().skip(1);
