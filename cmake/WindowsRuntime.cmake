@@ -11,17 +11,17 @@ if(SCRCTL_RUST_FRONTEND)
     if(NOT scrctl_rust_filename STREQUAL "scrctl.exe")
         message(FATAL_ERROR "The Rust Windows candidate must be named scrctl.exe")
     endif()
-    set_target_properties(scrctl PROPERTIES OUTPUT_NAME scrctl-legacy)
     list(PREPEND SCRCTL_RUNTIME_DLL_DIRS "$<TARGET_FILE_DIR:xdb_client>")
     add_executable(scrctl_rust_candidate IMPORTED)
     set_target_properties(scrctl_rust_candidate PROPERTIES IMPORTED_LOCATION "${SCRCTL_RUST_FRONTEND}")
     install(IMPORTED_RUNTIME_ARTIFACTS scrctl_rust_candidate
         RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
+else()
+    install(TARGETS scrctl RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
 endif()
-install(TARGETS scrctl RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
 
 # sdl2-compat 在运行时主动加载 SDL3，PE 导入表里没有这项依赖。
-if(NOT SCRCTL_FETCH_SDL2 AND SDL2_LIBDIR AND EXISTS "${SDL2_LIBDIR}/pkgconfig/sdl2-compat.pc")
+if(NOT SCRCTL_RUST_FRONTEND AND NOT SCRCTL_FETCH_SDL2 AND SDL2_LIBDIR AND EXISTS "${SDL2_LIBDIR}/pkgconfig/sdl2-compat.pc")
     find_package(SDL3 REQUIRED CONFIG HINTS "${SDL2_LIBDIR}/cmake/SDL3")
     install(IMPORTED_RUNTIME_ARTIFACTS SDL3::SDL3-shared
         RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)

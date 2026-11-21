@@ -27,8 +27,9 @@ The iOS crate currently has no UniFFI exports.
 ## CLI compatibility during migration
 
 The `scrctl-cli` crate owns the `scrctl` executable, target dispatch,
-and SDL frontend. It uses `xdb-engine` for device sessions. Unsupported
-iOS argument combinations still use the existing C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
+and SDL frontend. It uses `xdb-engine` for device sessions. The
+SDL3 build parses and executes iOS commands directly. The build
+without SDL3 is retained as a development launcher for C++ comparisons. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
 binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
 Windows). Keep the original frontend's runtime libraries beside it. The
 `scrctl-rs` first-frame probe remains a separate development command.
@@ -162,10 +163,8 @@ device. It handles `-s`, `--wifi`, `--wifi-port`, `--no-hw-decode`,
 Left click, drag and physical keys are forwarded. Focus loss, geometry changes
 and shutdown release active input.
 
-Set `SCRCTL_RUST_SDL=0` to compare against the legacy mirror. The Rust
-window forwards device shortcuts and multi-touch, and supports background
-keyboard input and screenshot polling. Unsupported option combinations still
-use the C++ frontend.
+The Rust window forwards device shortcuts and multi-touch and supports
+background keyboard input and screenshot polling.
 
 ```sh
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib \
@@ -231,8 +230,9 @@ Set `SCRCTL_TEST_HW_DECODE=1` to include the macOS hardware playback checks.
 ### Local macOS installation candidate
 
 Use a separate install prefix. The CMake package installs the Rust binary
-as `scrctl`, the C++ fallback as `scrctl-legacy`, and fixes and locally signs
-both executables with their bundled libraries.
+as `scrctl`, fixes its runtime library references and signs the executable
+and bundled libraries locally. The C++ comparison executable stays in the
+build directory.
 
 ```sh
 cmake -S . -B build-candidate
@@ -253,5 +253,5 @@ shared libraries through the system package manager. On Windows, build
 `scrctl.exe` for the same architecture as the C++ and XDB client builds.
 Configure with `SCRCTL_RUST_FRONTEND` pointing to that executable and include
 the native dependency directories in `SCRCTL_RUNTIME_DLL_DIRS`. CMake
-scans and packages the imports of both executables. These platform paths
+scans and packages the imports of the Rust executable. These platform paths
 require separate native package validation.

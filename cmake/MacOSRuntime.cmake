@@ -1,8 +1,3 @@
-if(SCRCTL_RUST_FRONTEND)
-    install(CODE "set(scrctl_has_rust_frontend ON)")
-else()
-    install(CODE "set(scrctl_has_rust_frontend OFF)")
-endif()
 # BundleUtilities 在安装阶段扫描、复制并修复 Mach-O 依赖；独立 CLI 的 bundle
 # 根就是 bin，所以库放在 bin/lib，避免它的安全检查拒绝修改根目录外的文件。
 target_link_options(scrctl PRIVATE "-Wl,-headerpad_max_install_names")
@@ -17,8 +12,7 @@ install(CODE [[
     file(GLOB scrctl_existing_items "${scrctl_root}/bin/*")
     foreach(scrctl_item IN LISTS scrctl_existing_items)
         get_filename_component(scrctl_name "${scrctl_item}" NAME)
-        if(NOT scrctl_name STREQUAL "scrctl" AND NOT scrctl_name STREQUAL "lib"
-           AND NOT (scrctl_has_rust_frontend AND scrctl_name STREQUAL "scrctl-legacy"))
+        if(NOT scrctl_name STREQUAL "scrctl" AND NOT scrctl_name STREQUAL "lib")
             message(FATAL_ERROR "macOS packaging requires a standalone install prefix; unrelated item: ${scrctl_item}")
         endif()
     endforeach()
@@ -29,7 +23,6 @@ install(CODE [[
 ]])
 if(SCRCTL_RUST_FRONTEND)
     install(PROGRAMS "${SCRCTL_RUST_FRONTEND}" DESTINATION bin RENAME scrctl)
-    install(PROGRAMS "$<TARGET_FILE:scrctl>" DESTINATION bin RENAME scrctl-legacy)
 else()
     install(TARGETS scrctl RUNTIME DESTINATION bin)
 endif()
@@ -40,7 +33,7 @@ endif()
 install(CODE "set(scrctl_xdb_origin \"$<TARGET_FILE:xdb_client>\")")
 install(CODE "set(scrctl_xdb_name \"$<TARGET_SONAME_FILE_NAME:xdb_client>\")")
 set(scrctl_sdl3_runtime "")
-if(SDL2_DIR)
+if(NOT SCRCTL_RUST_FRONTEND AND SDL2_DIR)
     get_filename_component(scrctl_sdl2_config "${SDL2_DIR}" REALPATH)
     if(scrctl_sdl2_config MATCHES "/sdl2-compat/")
         find_package(SDL3 REQUIRED CONFIG)
@@ -75,7 +68,7 @@ install(CODE [[
     get_bundle_keys("${scrctl_exe}" "${scrctl_plugins}" "${scrctl_root}/bin/lib" scrctl_keys)
     set(scrctl_origins "library\toriginal_path\n")
     foreach(scrctl_key IN LISTS scrctl_keys)
-        if(NOT scrctl_key STREQUAL "scrctl" AND NOT scrctl_key STREQUAL "scrctl_legacy")
+        if(NOT scrctl_key STREQUAL "scrctl")
             get_filename_component(scrctl_name "${${scrctl_key}_RESOLVED_EMBEDDED_ITEM}" NAME)
             set(scrctl_origin "${${scrctl_key}_RESOLVED_ITEM}")
             # BundleUtilities 为保留 symlink 链，会把 COPYFLAG=2 的来源改为
@@ -104,11 +97,7 @@ install(CODE [[
     # 仅重新签署包内副本，不改变 Homebrew、系统安全策略或任何系统库。
     find_program(scrctl_codesign codesign REQUIRED)
     file(GLOB_RECURSE scrctl_dylibs "${scrctl_root}/bin/lib/*.dylib")
-    set(scrctl_executables "${scrctl_exe}")
-    if(scrctl_has_rust_frontend)
-        list(APPEND scrctl_executables "${scrctl_root}/bin/scrctl-legacy")
-    endif()
-    foreach(scrctl_binary IN LISTS scrctl_dylibs scrctl_executables)
+    foreach(scrctl_binary IN LISTS scrctl_dylibs scrctl_exe)
         if(NOT IS_SYMLINK "${scrctl_binary}")
             execute_process(COMMAND "${scrctl_codesign}" --force --sign - "${scrctl_binary}"
                 RESULT_VARIABLE scrctl_sign_result ERROR_VARIABLE scrctl_sign_error)
