@@ -66,6 +66,12 @@ jobs:
       - name: 可执行文件冒烟
         run: ./build/scrctl --help >/dev/null
 
+      - name: Rust CLI 参数转发与 RFB 回环
+        run: |
+          cargo build --manifest-path core/Cargo.toml --package scrctl-cli --bin scrctl --locked
+          python3 core/tests/cli_parity.py build/scrctl core/target/debug/scrctl
+          python3 core/tests/cli_targets.py core/target/debug/scrctl
+
       - name: 离线自检
         run: ctest --test-dir build --output-on-failure
 

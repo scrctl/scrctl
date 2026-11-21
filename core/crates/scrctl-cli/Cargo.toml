@@ -1,0 +1,32 @@
+[package]
+name = "scrctl-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+default-run = "scrctl"
+
+[features]
+xdb = ["dep:scrctl-ios", "scrctl-ios/xdb", "dep:serde_json"]
+sdl3 = ["xdb", "dep:sdl3"]
+ffmpeg-next = ["dep:ffmpeg-next"]
+
+[dependencies]
+scrctl-ios = { path = "../scrctl-ios", optional = true }
+serde_json = { version = "1", optional = true }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+rfb-engine = { path = "../rfb-engine" }
+tokio = { version = "1", features = ["rt", "time"] }
+sdl3 = { version = "=0.22.1", features = ["use-pkg-config"], optional = true }
+ffmpeg-next = { version = "=9.1.0", default-features = false, features = ["format", "software-scaling"], optional = true }
+
+[[bin]]
+name = "scrctl-rs"
+path = "src/bin/scrctl-rs.rs"
+required-features = ["xdb"]
+
+[[bin]]
+name = "scrctl"
+path = "src/main.rs"

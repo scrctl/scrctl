@@ -16,7 +16,7 @@ the Homebrew XDB package:
 
 ```sh
 export XDB_LIB_DIR="$(brew --prefix scrctl/tap/xdb)/lib"
-cargo build --manifest-path core/Cargo.toml -p scrctl-ios --features xdb --locked
+cargo build --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl-rs --features xdb --locked
 DYLD_LIBRARY_PATH="$XDB_LIB_DIR" core/target/debug/scrctl-rs --transport wifi
 ```
 
@@ -26,8 +26,9 @@ The iOS crate currently has no UniFFI exports.
 
 ## CLI compatibility during migration
 
-The workspace's Rust `scrctl` launcher forwards every argument to the existing
-C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
+The `scrctl-cli` crate owns the `scrctl` executable, target dispatch,
+and SDL frontend. It uses `scrctl-ios` for device sessions. Unsupported
+iOS argument combinations still use the existing C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
 binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
 Windows). Keep the original frontend's runtime libraries beside it. The
 `scrctl-rs` first-frame probe remains a separate development command.
@@ -61,7 +62,7 @@ frame, and clean disconnect. Pass the path to the original C++ executable to
 the parity test to compare legacy output and exit codes.
 
 ```sh
-cargo build --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --locked
+cargo build --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl --locked
 python3 core/tests/cli_targets.py core/target/debug/scrctl
 python3 core/tests/cli_parity.py /path/to/legacy/scrctl core/target/debug/scrctl
 ```
@@ -144,11 +145,11 @@ output and exit status without contacting a device.
 
 Build with `sdl3` and an SDL3 installation discoverable via pkg-config.
 With that build, the ordinary `scrctl` entry (or a leading `--target-type ios`)
-uses Rust for supported invocations with a positive `--exit-after`:
+uses Rust for supported invocations, including the default unlimited mirror:
 
 ```sh
 XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib cargo build --manifest-path core/Cargo.toml \
-  -p scrctl-ios --bin scrctl --features sdl3 --locked
+  -p scrctl-cli --bin scrctl --features sdl3 --locked
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
   core/target/debug/scrctl --wifi auto --exit-after 120
 ```
@@ -161,16 +162,15 @@ device. It handles `-s`, `--wifi`, `--wifi-port`, `--no-hw-decode`,
 Left click, drag and physical keys are forwarded. Focus loss, geometry changes
 and shutdown release active input.
 
-Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
-subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
-default to C++ while its shortcuts, multi-touch and window behavior are
-being ported. Advanced recording options, advanced window controls (including fullscreen/crop options),
-and other unrecognized option combinations also use the legacy frontend.
+Set `SCRCTL_RUST_SDL=0` to compare against the legacy mirror. The Rust
+window forwards device shortcuts and multi-touch, and supports background
+keyboard input and screenshot polling. Unsupported option combinations still
+use the C++ frontend.
 
 ```sh
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib \
   python3 core/tests/sdl_playback.py core/target/debug/scrctl \
-  cargo test --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --features sdl3 --locked --
+  cargo test --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl --features sdl3 --locked --
 ```
 
 The fixture uses SDL dummy video/audio by default. On macOS set
@@ -203,7 +203,8 @@ Recording also supports a window, audio-only MP4/MKV (`--no-video`), an
 explicit `--record-orientation` of 0/90/180/270, and an unlimited run
 with normal exit or `--time-limit` for finalization. Headless recording
 without a frame limit avoids video decode. The combined `--orientation`
-option still uses the legacy frontend. The loopback test checks RPC parameters and finalization order;
+option applies to both the display and container recording. The loopback test
+checks RPC parameters and finalization order;
 it does not produce an actual media file.
 
 

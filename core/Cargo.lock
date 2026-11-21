@@ -2360,15 +2360,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "scrctl-ios"
+name = "scrctl-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
  "ffmpeg-next",
  "rfb-engine",
+ "scrctl-ios",
  "sdl3",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "scrctl-ios"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
