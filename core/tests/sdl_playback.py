@@ -69,7 +69,8 @@ with FakeServer() as peer:
                SDL_AUDIO_DRIVER="dummy", SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
     result = subprocess.run(
         [sys.argv[1], "--exit-after", "5", "--record", "window.mkv",
-         "--record-orientation", "90", "--no-audio-playback"],
+         "--record-orientation", "180", "--orientation", "flip0", "--record-orientation", "90",
+         "--orientation", "auto", "--no-audio-playback"],
         env=env, capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0 and "processed 5 frames" in result.stdout, result

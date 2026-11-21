@@ -3,7 +3,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use scrctl_ios::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::{Event, WindowEvent};
@@ -57,13 +57,15 @@ struct Options {
     #[arg(long, value_parser = parse_crop)]
     crop: Option<[u32; 4]>,
     #[arg(long, value_parser = parse_display_orientation)]
-    display_orientation: Option<DisplayOrientation>,
+    display_orientation: Vec<DisplayOrientation>,
+    #[arg(long, value_parser = parse_display_orientation)]
+    orientation: Vec<DisplayOrientation>,
     #[arg(short = 'r', long)]
     record: Option<String>,
     #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
     record_format: Option<String>,
-    #[arg(long, value_parser = ["0", "90", "180", "270"])]
-    record_orientation: Option<String>,
+    #[arg(long, value_parser = parse_record_orientation)]
+    record_orientation: Vec<DisplayOrientation>,
     #[arg(long)]
     no_video: bool,
     #[arg(long, default_value_t = 0)]
@@ -184,6 +186,55 @@ fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static
     })
 }
 
+fn parse_record_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
+    let orientation = parse_display_orientation(value)?;
+    if orientation.angle.is_none() {
+        return Err("Recording orientation must be a right angle");
+    }
+    Ok(orientation)
+}
+
+#[derive(Default)]
+struct Orientations {
+    display: DisplayOrientation,
+    record: DisplayOrientation,
+}
+
+impl Orientations {
+    fn resolve(matches: &clap::ArgMatches) -> Self {
+        const FLAGS: [&str; 3] = ["orientation", "display_orientation", "record_orientation"];
+        let mut ordered: Vec<_> = FLAGS
+            .into_iter()
+            .flat_map(|flag| {
+                matches
+                    .indices_of(flag)
+                    .into_iter()
+                    .flatten()
+                    .zip(
+                        matches
+                            .get_many::<DisplayOrientation>(flag)
+                            .into_iter()
+                            .flatten(),
+                    )
+                    .map(move |(index, orientation)| (index, flag, *orientation))
+            })
+            .collect();
+        ordered.sort_unstable_by_key(|(index, _, _)| *index);
+        let mut result = Self::default();
+        for (_, flag, orientation) in ordered {
+            if flag != "record_orientation" {
+                result.display = orientation;
+            }
+            if flag == "record_orientation"
+                || (flag == "orientation" && orientation.angle.is_some())
+            {
+                result.record = orientation;
+            }
+        }
+        result
+    }
+}
+
 fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
     let invalid = "Expected WxH+X+Y or W:H:X:Y";
     let parts = if let Some((width, rest)) = value.split_once('x') {
@@ -266,10 +317,11 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
     if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
         return None;
     }
-    let options = Options::try_parse_from(
-        std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
-    )
-    .ok()?;
+    let matches = Options::command()
+        .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
+        .ok()?;
+    let options = Options::from_arg_matches(&matches).ok()?;
+    let orientations = Orientations::resolve(&matches);
     if options.no_video
         && !options.no_window
         && (options.fullscreen
@@ -281,21 +333,21 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
     }
     if let Some(path) = options.record.as_deref() {
         let container = recording_container(path, options.record_format.as_deref()).is_some();
-        let rotation = options.record_orientation.as_deref().unwrap_or("0");
+        let rotation = orientations.record.angle.unwrap_or_default();
         if path.is_empty()
             || (options.no_video && (!container || options.no_audio || options.exit_after != 0))
-            || ((!container || options.no_video) && rotation != "0")
+            || orientations.record.flip
+            || ((!container || options.no_video) && rotation != 0)
             || (!container && options.no_audio_playback && options.audio_dup)
         {
             return None;
         }
     } else if options.no_video
-        || options.record_orientation.is_some()
         || (options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")))
     {
         return None;
     }
-    Some(run(options))
+    Some(run(options, orientations))
 }
 
 struct Playback {
@@ -907,7 +959,7 @@ fn initial_window_size(
     Ok((width.max(1.0) as u32, height.max(1.0) as u32))
 }
 
-fn run(config: Options) -> Result<(), Box<dyn Error>> {
+fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
     config.window.keep_screen_awake(&sdl)?;
     let mut events = sdl.event_pump()?;
@@ -927,10 +979,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 audio: container.is_some() && !config.no_audio,
                 video: !config.no_video,
                 decode_video: !config.no_video && (!config.no_window || config.exit_after > 0),
-                orientation: config
-                    .record_orientation
-                    .as_deref()
-                    .and_then(|s| s.parse().ok()),
+                orientation: orientations.record.angle.map(|angle| angle as u16),
             })
         })
         .transpose()?;
@@ -970,7 +1019,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     }
     let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
-    let orientation = config.display_orientation.unwrap_or_default();
+    let orientation = orientations.display;
     let mut flip = (orientation.flip, false);
     let initial = Geometry::transformed(&frame, (1, 1), orientation.angle, 0, flip, config.crop);
     let (width, height) = initial_window_size(&video, initial.view_size(), &config)?;
