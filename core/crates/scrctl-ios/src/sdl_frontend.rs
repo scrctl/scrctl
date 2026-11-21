@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use scrctl_ios::{AudioReader, Frame, Session, VideoRecording};
+use scrctl_ios::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::{Mod, Scancode};
@@ -36,8 +36,12 @@ struct Options {
     shortcut_mod: Mod,
     #[arg(long)]
     no_hw_decode: bool,
-    #[arg(long, visible_alias = "title", default_value = "scrctl")]
-    window_title: String,
+    #[arg(short = 'b', long, value_parser = parse_bit_rate, conflicts_with = "no_video")]
+    video_bit_rate: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u16).range(..=240), conflicts_with = "no_video")]
+    max_fps: Option<u16>,
+    #[command(flatten)]
+    window: WindowOptions,
     #[arg(long)]
     no_window: bool,
     #[arg(short = 'f', long)]
@@ -60,6 +64,115 @@ struct Options {
     time_limit: u64,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct WindowOptions {
+    #[arg(long, visible_alias = "title", default_value = "scrctl")]
+    window_title: String,
+    #[arg(long, value_parser = parse_window_position, allow_negative_numbers = true)]
+    window_x: Option<i32>,
+    #[arg(long, value_parser = parse_window_position, allow_negative_numbers = true)]
+    window_y: Option<i32>,
+    #[arg(long)]
+    always_on_top: bool,
+    #[arg(long)]
+    render_driver: Option<String>,
+    #[arg(long)]
+    disable_screensaver: bool,
+    #[arg(long, default_value = "000", value_parser = parse_background)]
+    pub(crate) background_color: Color,
+}
+
+fn parse_window_position(value: &str) -> Result<i32, &'static str> {
+    if value == "auto" {
+        Ok(sdl3::sys::video::SDL_WINDOWPOS_CENTERED_MASK as i32)
+    } else {
+        value.parse().map_err(|_| "Expected an integer or auto")
+    }
+}
+
+fn parse_background(value: &str) -> Result<Color, &'static str> {
+    let value = value.strip_prefix('#').unwrap_or(value);
+    let error = "Expected RGB or RRGGBB";
+    if !matches!(value.len(), 3 | 6) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(error);
+    }
+    let digits = value.len() / 3;
+    let channel = |index| {
+        let value = u8::from_str_radix(&value[index * digits..(index + 1) * digits], 16)
+            .expect("hex digits validated");
+        if digits == 1 { value * 17 } else { value }
+    };
+    Ok(Color::RGB(channel(0), channel(1), channel(2)))
+}
+
+impl WindowOptions {
+    pub(crate) fn keep_screen_awake(&self, sdl: &sdl3::Sdl) -> Result<(), sdl3::Error> {
+        if self.disable_screensaver {
+            sdl.video()?.disable_screen_saver()?;
+        }
+        Ok(())
+    }
+
+    fn builder(
+        &self,
+        video: &sdl3::VideoSubsystem,
+        width: u32,
+        height: u32,
+    ) -> sdl3::video::WindowBuilder {
+        use sdl3::video::WindowFlags;
+        let center = sdl3::sys::video::SDL_WINDOWPOS_CENTERED_MASK as i32;
+        let mut builder = video.window(&self.window_title, width, height);
+        builder.resizable().position(
+            self.window_x.unwrap_or(center),
+            self.window_y.unwrap_or(center),
+        );
+        if self.always_on_top {
+            let flags = builder.flags() | WindowFlags::ALWAYS_ON_TOP;
+            builder.set_flags(flags);
+        }
+        builder
+    }
+
+    fn canvas(
+        &self,
+        window: sdl3::video::Window,
+    ) -> Result<sdl3::render::WindowCanvas, Box<dyn Error>> {
+        let driver = self
+            .render_driver
+            .as_deref()
+            .filter(|driver| !driver.is_empty())
+            .map(std::ffi::CString::new)
+            .transpose()?;
+        Ok(sdl3::render::create_renderer(window, driver.as_deref())?)
+    }
+
+    pub(crate) fn open(
+        &self,
+        video: &sdl3::VideoSubsystem,
+        width: u32,
+        height: u32,
+    ) -> Result<sdl3::render::WindowCanvas, Box<dyn Error>> {
+        self.canvas(self.builder(video, width, height).build()?)
+    }
+}
+
+fn parse_bit_rate(value: &str) -> Result<u64, &'static str> {
+    let (digits, multiplier) = match value.as_bytes().last() {
+        Some(b'K' | b'k') => (&value[..value.len() - 1], 1_000),
+        Some(b'M' | b'm') => (&value[..value.len() - 1], 1_000_000),
+        _ => (value, 1),
+    };
+    let error = "Expected a nonnegative integer bit/s value, optionally suffixed K or M";
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(error);
+    }
+    digits
+        .parse::<u64>()
+        .ok()
+        .and_then(|rate| rate.checked_mul(multiplier))
+        .ok_or(error)
 }
 
 fn parse_shortcut_mod(text: &str) -> Result<Mod, &'static str> {
@@ -670,6 +783,7 @@ fn recording_container(path: &str, explicit: Option<&str>) -> Option<&'static st
 
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
+    config.window.keep_screen_awake(&sdl)?;
     let mut events = sdl.event_pump()?;
     let absolute_recording = config
         .record
@@ -700,8 +814,12 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         "auto",
         &config.wifi,
         config.wifi_port,
-        !config.no_hw_decode,
-        recording,
+        VideoOptions {
+            hardware_decode: !config.no_hw_decode,
+            recording,
+            max_bitrate: config.video_bit_rate,
+            max_fps: config.max_fps.unwrap_or_default(),
+        },
     )?;
     let decode_video = recording.is_none_or(|recording| recording.decode_video);
     let first_frame = if decode_video {
@@ -726,8 +844,8 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     }
     let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
-    let mut builder = video.window(
-        &config.window_title,
+    let mut builder = config.window.builder(
+        &video,
         if config.window_width > 0 {
             config.window_width
         } else if config.window_height > 0 {
@@ -745,7 +863,6 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
             840
         },
     );
-    builder.resizable().position_centered();
     if config.window_borderless {
         builder.borderless();
     }
@@ -753,7 +870,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     if config.fullscreen {
         window.set_fullscreen(true)?;
     }
-    let mut canvas = window.into_canvas();
+    let mut canvas = config.window.canvas(window)?;
     let creator = canvas.texture_creator();
     let mut texture =
         creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
@@ -805,7 +922,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 canvas.window().size().1,
                 SDL_LOGICAL_PRESENTATION_STRETCH,
             )?;
-            canvas.set_draw_color(Color::BLACK);
+            canvas.set_draw_color(config.window.background_color);
             canvas.clear();
             canvas.copy_ex(
                 &texture,
@@ -1058,14 +1175,8 @@ fn run_headless(
     let mut background = if config.no_window {
         None
     } else {
-        let mut canvas = sdl
-            .video()?
-            .window(&config.window_title, 640, 480)
-            .resizable()
-            .position_centered()
-            .build()?
-            .into_canvas();
-        canvas.set_draw_color(Color::BLACK);
+        let mut canvas = config.window.open(&sdl.video()?, 640, 480)?;
+        canvas.set_draw_color(config.window.background_color);
         canvas.clear();
         canvas.present();
         Some(canvas)

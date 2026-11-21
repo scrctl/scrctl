@@ -11,6 +11,35 @@ fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
 sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
+class VideoLimitsServer(FakeServer):
+    def handle_call(self, name, params):
+        result, data = super().handle_call(name, params)
+        if name == "server.info":
+            result["capabilities"].update(video_max_bitrate=True, video_max_fps=True)
+        return result, data
+
+
+for server_class in (VideoLimitsServer, FakeServer):
+    with server_class() as peer:
+        env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+                   SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+        result = subprocess.run(
+            [sys.argv[1], "--exit-after", "5", "--no-audio", "-b", "2m",
+             "--max-fps", "30", "--window-x", "-10", "--window-y", "auto",
+             "--always-on-top", "--disable-screensaver", "--render-driver", "software",
+             "--background-color", "#123"],
+            env=env, capture_output=True, text=True, timeout=15,
+        )
+        if server_class is VideoLimitsServer:
+            assert result.returncode == 0 and "processed 5 frames" in result.stdout, result
+            assert ("video.start", {"decode": True, "hardware_decode": True,
+                                    "max_bitrate": 2000000, "max_fps": 30}) in peer.calls, peer.calls
+        else:
+            assert result.returncode == 1 and "does not support" in result.stderr, result
+            assert "connection.open" not in peer.methods() and "video.start" not in peer.methods()
+print("PASS video limits, capability checks and SDL window options")
+
+
 for extra in (["--audio-dup", "--audio-buffer", "200"], ["--no-audio", "--no-control"], ["--no-audio-playback"]):
     with FakeServer() as peer:
         env = dict(

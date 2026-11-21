@@ -183,6 +183,14 @@ pub struct VideoRecording<'a> {
     pub orientation: Option<u16>,
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct VideoOptions<'a> {
+    pub hardware_decode: bool,
+    pub recording: Option<VideoRecording<'a>>,
+    pub max_bitrate: Option<u64>,
+    pub max_fps: u16,
+}
+
 pub struct Session {
     client: Client,
     open: bool,
@@ -215,8 +223,10 @@ impl Session {
             transport,
             wifi,
             wifi_port,
-            hardware_decode,
-            None,
+            VideoOptions {
+                hardware_decode,
+                ..VideoOptions::default()
+            },
         )
     }
 
@@ -226,10 +236,27 @@ impl Session {
         transport: &str,
         wifi: &str,
         wifi_port: u16,
-        hardware_decode: bool,
-        recording: Option<VideoRecording<'_>>,
+        options: VideoOptions<'_>,
     ) -> Result<Self, Error> {
+        let recording = options.recording;
+        let decode = recording.is_none_or(|recording| recording.decode_video);
+        if options.max_fps > 0 && !decode {
+            return Err(Error::Client(
+                "--max-fps requires decoded video output".into(),
+            ));
+        }
         let mut client = Client::connect(port)?;
+        if options.max_bitrate.unwrap_or(0) > 0 || options.max_fps > 0 {
+            let (info, _) = client.request(c"server.info", json!({}))?;
+            let capabilities = &info["capabilities"];
+            if (options.max_bitrate.unwrap_or(0) > 0 && capabilities["video_max_bitrate"] != true)
+                || (options.max_fps > 0 && capabilities["video_max_fps"] != true)
+            {
+                return Err(Error::Client(
+                    "xdb Server does not support the requested video bitrate or output frame-rate limit".into(),
+                ));
+            }
+        }
         let mut params = json!({"udid": udid, "transport": transport});
         if !wifi.is_empty() {
             params["wifi"] = json!(wifi);
@@ -243,11 +270,16 @@ impl Session {
             attachment: opened["attachment"].as_str().map(str::to_owned),
             recording_pending: recording.is_some(),
         };
-        let decode = recording.is_none_or(|recording| recording.decode_video);
         let mut video = json!({
             "decode": decode,
-            "hardware_decode": decode && hardware_decode,
+            "hardware_decode": decode && options.hardware_decode,
         });
+        if let Some(max_bitrate) = options.max_bitrate {
+            video["max_bitrate"] = json!(max_bitrate);
+        }
+        if options.max_fps > 0 {
+            video["max_fps"] = json!(options.max_fps);
+        }
         if let Some(recording) = recording {
             if let Some(format) = recording.container {
                 session.client.request(

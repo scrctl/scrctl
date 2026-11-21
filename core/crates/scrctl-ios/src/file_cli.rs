@@ -9,7 +9,7 @@ use clap::Parser;
 use ffmpeg_next as av;
 use sdl3::{
     event::{Event, WindowEvent},
-    pixels::{Color, PixelFormat},
+    pixels::PixelFormat,
     render::FRect,
 };
 
@@ -22,8 +22,8 @@ struct Options {
     no_window: bool,
     #[arg(long)]
     hw_decode: bool,
-    #[arg(long, visible_alias = "title", default_value = "scrctl")]
-    window_title: String,
+    #[command(flatten)]
+    window: crate::sdl_frontend::WindowOptions,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
@@ -86,18 +86,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut decoder = context.decoder().video()?;
 
     let sdl = sdl3::init()?;
+    options.window.keep_screen_awake(&sdl)?;
     let mut events = sdl.event_pump()?;
     let mut canvas = if options.no_window {
         None
     } else {
-        Some(
-            sdl.video()?
-                .window(&options.window_title, 840, 540)
-                .position_centered()
-                .resizable()
-                .build()?
-                .into_canvas(),
-        )
+        Some(options.window.open(&sdl.video()?, 840, 540)?)
     };
     let creator = canvas.as_ref().map(|canvas| canvas.texture_creator());
     let mut texture = None;
@@ -185,7 +179,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let (out_w, out_h) = canvas.output_size()?;
             let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
             let (w, h) = (width as f32 * scale, height as f32 * scale);
-            canvas.set_draw_color(Color::BLACK);
+            canvas.set_draw_color(options.window.background_color);
             canvas.clear();
             canvas.copy(
                 texture,
