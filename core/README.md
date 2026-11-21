@@ -31,3 +31,11 @@ C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
 binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
 Windows). Keep the original frontend's runtime libraries beside it. The
 `scrctl-rs` first-frame probe remains a separate development command.
+
+Run the iOS session regression against the XDB loopback fixture without a phone.
+On macOS, reuse the library path from the example above:
+
+```sh
+cargo build --manifest-path core/Cargo.toml -p scrctl-ios --features xdb --example session_fixture --locked
+DYLD_LIBRARY_PATH="$XDB_LIB_DIR" python3 core/tests/ios_session.py core/target/debug/examples/session_fixture
+```

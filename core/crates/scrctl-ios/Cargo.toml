@@ -21,3 +21,7 @@ required-features = ["xdb"]
 [[bin]]
 name = "scrctl"
 path = "src/compat.rs"
+
+[[example]]
+name = "session_fixture"
+required-features = ["xdb"]
