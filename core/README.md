@@ -156,15 +156,15 @@ DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
 The Rust SDL3 path uses XDB for decoded PCM, with the default SDL playback
 device. It handles `-s`, `--wifi`, `--wifi-port`, `--no-hw-decode`,
 `--window-title` / `--title`, `--no-audio`, `--no-audio-playback`,
-`--audio-dup`, `--audio-buffer`, `--exit-after` and `-n` / `--no-control`.
+`--audio-dup`, `--audio-buffer`, `--exit-after`, `--no-window` and
+`-n` / `--no-control`.
 Left click, drag and physical keys are forwarded. Focus loss, geometry changes
 and shutdown release active input.
 
 Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
 subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
 default to C++ while its shortcuts, multi-touch and window behavior are
-being ported. Recording, headless mode, file playback, pairing, clipboard
-commands, advanced window controls (including fullscreen/crop options),
+being ported. Recording, file playback, pairing, advanced window controls (including fullscreen/crop options),
 and other unrecognized option combinations also use the legacy frontend.
 
 ```sh
@@ -176,3 +176,17 @@ DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib XDB_LIB_DIR=/opt/homebrew/opt/xdb/li
 The fixture uses SDL dummy video/audio by default. On macOS set
 `SCRCTL_TEST_AUDIO_DRIVER=coreaudio` to exercise the system audio device
 with silent test PCM.
+
+
+### App list, clipboard and headless regression
+
+With XDB enabled, the launcher handles standalone `--list-apps`, `--copy`
+(including an empty value) and `--paste`, with optional device selection.
+Combinations outside that parser, including `--lang`, use the incumbent
+frontend. For `--no-window` with a positive `--exit-after`, Rust counts real
+decoded frames and can play audio without initializing SDL video.
+
+```sh
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
+  python3 core/tests/device_cli_parity.py /opt/homebrew/bin/scrctl core/target/debug/scrctl
+```

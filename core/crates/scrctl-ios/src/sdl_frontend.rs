@@ -35,6 +35,8 @@ struct Options {
     no_hw_decode: bool,
     #[arg(long, visible_alias = "title", default_value = "scrctl")]
     window_title: String,
+    #[arg(long)]
+    no_window: bool,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
@@ -256,7 +258,6 @@ impl Input {
 
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
-    let video = sdl.video()?;
     let mut events = sdl.event_pump()?;
     let mut session = Session::open_target(
         0,
@@ -275,6 +276,10 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
             return Err("No first frame from XDB within five seconds".into());
         }
     };
+    if config.no_window {
+        return run_headless(&sdl, events, session, frame, &config);
+    }
+    let video = sdl.video()?;
     let mut canvas = video
         .window(&config.window_title, 420, 840)
         .resizable()
@@ -285,13 +290,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut texture =
         creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
     let mut texture_size = (frame.width, frame.height);
-    let mut playback = if config.no_audio || config.no_audio_playback {
-        None
-    } else {
-        Playback::start(&sdl, &mut session, &config)
-            .map_err(|error| eprintln!("Audio unavailable: {error}"))
-            .ok()
-    };
+    let mut playback = start_playback(&sdl, &mut session, &config);
     let mut input = Input::default();
     let mut geometry = Geometry::new(&frame, canvas.window().size());
     let result = (|| -> Result<(), Box<dyn Error>> {
@@ -375,13 +374,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                         continue 'running;
                     }
                 }
-                if let Some(audio) = &mut playback
-                    && let Err(error) = audio.fill()
-                {
-                    eprintln!("Audio unavailable: {error}");
-                    playback = None;
-                    let _ = session.stop_audio();
-                }
+                fill_playback(&mut playback, &mut session);
                 if let Some(next) = session.next_frame(frame.serial, 8)? {
                     frame = next;
                     break;
@@ -392,6 +385,64 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         Ok(())
     })();
     input.release(&mut session);
+    drop(playback);
+    let close = session.close();
+    result?;
+    close?;
+    Ok(())
+}
+
+fn start_playback(sdl: &sdl3::Sdl, session: &mut Session, config: &Options) -> Option<Playback> {
+    if config.no_audio || config.no_audio_playback {
+        return None;
+    }
+    Playback::start(sdl, session, config)
+        .map_err(|error| eprintln!("Audio unavailable: {error}"))
+        .ok()
+}
+
+fn fill_playback(playback: &mut Option<Playback>, session: &mut Session) {
+    if let Some(audio) = playback
+        && let Err(error) = audio.fill()
+    {
+        eprintln!("Audio unavailable: {error}");
+        *playback = None;
+        let _ = session.stop_audio();
+    }
+}
+
+fn run_headless(
+    sdl: &sdl3::Sdl,
+    mut events: sdl3::EventPump,
+    mut session: Session,
+    first_frame: Frame,
+    config: &Options,
+) -> Result<(), Box<dyn Error>> {
+    let mut playback = start_playback(sdl, &mut session, config);
+    let result = (|| -> Result<(), scrctl_ios::Error> {
+        let mut count = 1;
+        let mut serial = first_frame.serial;
+        drop(first_frame);
+        loop {
+            if count == config.exit_after {
+                println!("Reached --exit-after {}", config.exit_after);
+                break;
+            }
+            if events
+                .poll_iter()
+                .any(|event| matches!(event, Event::Quit { .. }))
+            {
+                break;
+            }
+            fill_playback(&mut playback, &mut session);
+            if let Some(frame) = session.next_frame(serial, 8)? {
+                serial = frame.serial;
+                count += 1;
+            }
+        }
+        println!("Finished: processed {count} frames");
+        Ok(())
+    })();
     drop(playback);
     let close = session.close();
     result?;

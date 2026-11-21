@@ -1,5 +1,7 @@
 #[path = "desktop.rs"]
 mod desktop;
+#[cfg(feature = "xdb")]
+mod device_cli;
 #[cfg(feature = "sdl3")]
 mod sdl_frontend;
 
@@ -39,6 +41,10 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             #[cfg(feature = "xdb")]
             if let Some(timeout) = discovery_timeout(&args) {
                 return Ok(list_devices(timeout));
+            }
+            #[cfg(feature = "xdb")]
+            if let Some(status) = device_cli::run_if_supported(&args) {
+                return Ok(status);
             }
             #[cfg(feature = "sdl3")]
             if let Some(result) = sdl_frontend::run_if_supported(&args) {

@@ -328,3 +328,46 @@ impl AudioReader {
             .collect())
     }
 }
+
+/// Run an operation on a device without starting a media stream.
+pub fn device_commands(
+    port: u16,
+    udid: &str,
+    wifi: &str,
+    wifi_port: u16,
+    list_apps: bool,
+    copy: Option<&str>,
+    paste: bool,
+) -> Result<(), Error> {
+    let mut client = Client::connect(port)?;
+    client.request(
+        c"connection.open",
+        json!({"udid": udid, "wifi": wifi, "port": wifi_port}),
+    )?;
+    // The legacy commands release the association by closing the client socket.
+    if list_apps {
+        let (apps, _) = client.request(c"app.list", json!({}))?;
+        for app in apps
+            .as_array()
+            .ok_or_else(|| Error::Client("Invalid XDB app list".into()))?
+        {
+            let field = |name| {
+                app[name]
+                    .as_str()
+                    .ok_or_else(|| Error::Client("Invalid XDB app entry".into()))
+            };
+            println!("{}  {}", field("bundle_id")?, field("name")?);
+        }
+    }
+    if let Some(text) = copy {
+        client.request(c"clipboard.set", json!({"text": text}))?;
+    }
+    if paste {
+        let (value, _) = client.request(c"clipboard.get", json!({}))?;
+        let text = value["text"]
+            .as_str()
+            .ok_or_else(|| Error::Client("Invalid XDB clipboard response".into()))?;
+        println!("{text}");
+    }
+    Ok(())
+}
