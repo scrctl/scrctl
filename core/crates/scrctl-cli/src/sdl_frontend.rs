@@ -547,15 +547,15 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case("zh"))
             }),
     };
-    if chinese && !options.version {
-        // Keep translated output on the existing path until the catalog is ported.
-        return None;
-    }
     if options.help {
         if chinese {
-            return None;
+            command = crate::help::localize_chinese(command);
         }
         return Some(command.print_long_help().map(|()| 0).map_err(Into::into));
+    }
+    if chinese && !options.version {
+        // Keep translated runtime messages on the existing path for now.
+        return None;
     }
     let invalid = |message: &str| {
         if chinese {

@@ -59,3 +59,14 @@ if native:
         assert b"iOS screen mirroring and control" in result.stdout
         assert b"--play" in result.stdout and b"MOD+V" in result.stdout
         print("PASS native help", *args)
+
+    for args, overrides in (
+        (["--help", "--lang=zh-CN"], {}),
+        (["-h"], {"LC_ALL": "zh_CN.UTF-8"}),
+    ):
+        result = subprocess.run([launcher, *args], env={**native_env, **overrides},
+                                capture_output=True, timeout=10)
+        assert result.returncode == 0 and not result.stderr, result
+        help_text = result.stdout.decode("utf-8")
+        assert "iOS 屏幕镜像与控制" in help_text and "显示帮助" in help_text and "--wifi" in help_text
+        print("PASS native Chinese help", *args)

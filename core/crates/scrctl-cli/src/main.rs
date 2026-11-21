@@ -7,6 +7,8 @@ mod diagnostics;
 #[cfg(all(feature = "sdl3", feature = "ffmpeg-next"))]
 mod file_cli;
 #[cfg(feature = "sdl3")]
+mod help;
+#[cfg(feature = "sdl3")]
 mod sdl_frontend;
 
 use std::{env, error::Error, ffi::OsString, io, path::PathBuf, process::Command};
