@@ -52,6 +52,12 @@ struct Options {
     window_width: u32,
     #[arg(long, default_value_t = 0)]
     window_height: u32,
+    #[arg(long, value_parser = parse_scale)]
+    scale: Option<f64>,
+    #[arg(long, value_parser = parse_crop)]
+    crop: Option<[u32; 4]>,
+    #[arg(long, value_parser = parse_display_orientation)]
+    display_orientation: Option<DisplayOrientation>,
     #[arg(short = 'r', long)]
     record: Option<String>,
     #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
@@ -156,6 +162,59 @@ impl WindowOptions {
     ) -> Result<sdl3::render::WindowCanvas, Box<dyn Error>> {
         self.canvas(self.builder(video, width, height).build()?)
     }
+}
+
+#[derive(Clone, Copy, Default)]
+struct DisplayOrientation {
+    angle: Option<i32>,
+    flip: bool,
+}
+
+fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
+    if value == "auto" {
+        return Ok(DisplayOrientation::default());
+    }
+    let degrees = value.strip_prefix("flip").unwrap_or(value);
+    if !matches!(degrees, "0" | "90" | "180" | "270") {
+        return Err("Expected auto or a right angle, optionally prefixed with flip");
+    }
+    Ok(DisplayOrientation {
+        angle: degrees.parse().ok(),
+        flip: value != degrees,
+    })
+}
+
+fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
+    let invalid = "Expected WxH+X+Y or W:H:X:Y";
+    let parts = if let Some((width, rest)) = value.split_once('x') {
+        let (height, offsets) = rest.split_once('+').ok_or(invalid)?;
+        let (x, y) = offsets.split_once('+').ok_or(invalid)?;
+        [width, height, x, y]
+    } else {
+        let fields: Vec<_> = value.split(':').collect();
+        fields.try_into().map_err(|_| invalid)?
+    };
+    let mut crop = [0; 4];
+    for (output, part) in crop.iter_mut().zip(parts) {
+        *output = part
+            .trim_start()
+            .parse::<i32>()
+            .ok()
+            .and_then(|n| u32::try_from(n).ok())
+            .ok_or(invalid)?;
+    }
+    if crop[0] == 0 || crop[1] == 0 {
+        return Err(invalid);
+    }
+    Ok(crop)
+}
+
+fn parse_scale(value: &str) -> Result<f64, &'static str> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .ok_or("Expected a finite positive number")
 }
 
 fn parse_bit_rate(value: &str) -> Result<u64, &'static str> {
@@ -281,18 +340,17 @@ struct Geometry {
     area: Rect,
     angle: i32,
     panel: (u32, u32),
+    source: Rect,
 }
 
 impl Geometry {
-    fn new(frame: &Frame, size: (u32, u32)) -> Self {
-        Self::transformed(frame, size, 0, (false, false))
-    }
-
     fn transformed(
         frame: &Frame,
         (window_w, window_h): (u32, u32),
+        orientation: Option<i32>,
         offset: i32,
         flip: (bool, bool),
+        crop: Option<[u32; 4]>,
     ) -> Self {
         let dimension = |key, limit| {
             frame.display[key]
@@ -302,21 +360,38 @@ impl Geometry {
                 .unwrap_or(limit)
                 .min(limit)
         };
+        let fallback = if (frame.width, frame.height) == (1136, 2464)
+            && (frame.display["width"].as_u64().unwrap_or(0) == 0
+                || frame.display["height"].as_u64().unwrap_or(0) == 0)
+        {
+            (1125, 2436)
+        } else {
+            (frame.width, frame.height)
+        };
         let panel = (
-            dimension("width", frame.width),
-            dimension("height", frame.height),
+            dimension("width", fallback.0),
+            dimension("height", fallback.1),
         );
-        let angle = match frame.display["orientation"].as_str() {
+        let [w, h, x, y] = crop.unwrap_or([panel.0, panel.1, 0, 0]);
+        let x = x.min(frame.width - 1);
+        let y = y.min(frame.height - 1);
+        let source = Rect::new(
+            x as i32,
+            y as i32,
+            w.min(frame.width - x),
+            h.min(frame.height - y),
+        );
+        let device_angle = match frame.display["orientation"].as_str() {
             Some("rot90") => 90,
             Some("rot180") => 180,
             Some("rot270") => 270,
             _ => 0,
         };
-        let angle = (angle + offset).rem_euclid(360);
+        let angle = (orientation.unwrap_or(device_angle) + offset).rem_euclid(360);
         let (w, h) = if angle % 180 == 0 {
-            panel
+            (source.width(), source.height())
         } else {
-            (panel.1, panel.0)
+            (source.height(), source.width())
         };
         let scale = (window_w as f64 / w as f64).min(window_h as f64 / h as f64);
         let w = (w as f64 * scale).round().max(1.0) as u32;
@@ -325,7 +400,17 @@ impl Geometry {
             area: Rect::from_center((window_w as i32 / 2, window_h as i32 / 2), w, h),
             angle,
             panel,
+            source,
             flip,
+        }
+    }
+
+    fn view_size(self) -> (u32, u32) {
+        let (w, h) = (self.source.width(), self.source.height());
+        if self.angle % 180 == 0 {
+            (w, h)
+        } else {
+            (h, w)
         }
     }
 
@@ -342,8 +427,14 @@ impl Geometry {
             _ => (u, v),
         };
         Some((
-            if self.flip.0 { 1.0 - x } else { x },
-            if self.flip.1 { 1.0 - y } else { y },
+            ((f64::from(self.source.x())
+                + f64::from(self.source.width()) * if self.flip.0 { 1.0 - x } else { x })
+                / f64::from(self.panel.0))
+            .clamp(0.0, 1.0),
+            ((f64::from(self.source.y())
+                + f64::from(self.source.height()) * if self.flip.1 { 1.0 - y } else { y })
+                / f64::from(self.panel.1))
+            .clamp(0.0, 1.0),
         ))
     }
 }
@@ -781,6 +872,41 @@ fn recording_container(path: &str, explicit: Option<&str>) -> Option<&'static st
     }
 }
 
+fn initial_window_size(
+    video: &sdl3::VideoSubsystem,
+    view: (u32, u32),
+    config: &Options,
+) -> Result<(u32, u32), &'static str> {
+    let (w, h) = (f64::from(view.0), f64::from(view.1));
+    let (width, height) = (
+        f64::from(config.window_width),
+        f64::from(config.window_height),
+    );
+    let (width, height) = match (config.window_width, config.window_height) {
+        (0, 0) => {
+            let scale = config.scale.unwrap_or_else(|| {
+                let bounds = video
+                    .get_primary_display()
+                    .and_then(|display| display.get_bounds());
+                let (usable_w, usable_h) = bounds.map_or((840, 480), |rect| {
+                    (rect.width(), rect.height().saturating_sub(60))
+                });
+                1.0_f64
+                    .min(f64::from(usable_w) / w)
+                    .min(f64::from(usable_h.max(1)) / h)
+            });
+            (w * scale, h * scale)
+        }
+        (0, _) => (height * w / h, height),
+        (_, 0) => (width, width * h / w),
+        _ => (width, height),
+    };
+    if width.max(height) > f64::from(i32::MAX) {
+        return Err("Window dimensions are too large; reduce --scale or the requested window size");
+    }
+    Ok((width.max(1.0) as u32, height.max(1.0) as u32))
+}
+
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
     config.window.keep_screen_awake(&sdl)?;
@@ -844,25 +970,11 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     }
     let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
-    let mut builder = config.window.builder(
-        &video,
-        if config.window_width > 0 {
-            config.window_width
-        } else if config.window_height > 0 {
-            ((u64::from(config.window_height) * u64::from(frame.width)) / u64::from(frame.height))
-                .clamp(1, u64::from(i32::MAX as u32)) as u32
-        } else {
-            420
-        },
-        if config.window_height > 0 {
-            config.window_height
-        } else if config.window_width > 0 {
-            ((u64::from(config.window_width) * u64::from(frame.height)) / u64::from(frame.width))
-                .clamp(1, u64::from(i32::MAX as u32)) as u32
-        } else {
-            840
-        },
-    );
+    let orientation = config.display_orientation.unwrap_or_default();
+    let mut flip = (orientation.flip, false);
+    let initial = Geometry::transformed(&frame, (1, 1), orientation.angle, 0, flip, config.crop);
+    let (width, height) = initial_window_size(&video, initial.view_size(), &config)?;
+    let mut builder = config.window.builder(&video, width, height);
     if config.window_borderless {
         builder.borderless();
     }
@@ -880,10 +992,16 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         shortcut_mods: config.shortcut_mod,
         ..Input::default()
     };
-    let mut geometry = Geometry::new(&frame, canvas.window().size());
+    let mut geometry = Geometry::transformed(
+        &frame,
+        canvas.window().size(),
+        orientation.angle,
+        0,
+        flip,
+        config.crop,
+    );
     let start = Instant::now();
     let mut rotation = 0;
-    let mut flip = (false, false);
     let mut paused = false;
     let mut refresh = false;
     let mut paste: Option<PendingPaste> = None;
@@ -900,8 +1018,14 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 )?;
                 texture_size = (frame.width, frame.height);
             }
-            let new_geometry =
-                Geometry::transformed(&frame, canvas.window().size(), rotation, flip);
+            let new_geometry = Geometry::transformed(
+                &frame,
+                canvas.window().size(),
+                orientation.angle,
+                rotation,
+                flip,
+                config.crop,
+            );
             if new_geometry != geometry {
                 if let Some(pending) = &paste {
                     pending.cancel();
@@ -926,7 +1050,12 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
             canvas.clear();
             canvas.copy_ex(
                 &texture,
-                FRect::new(0.0, 0.0, geometry.panel.0 as f32, geometry.panel.1 as f32),
+                FRect::new(
+                    geometry.source.x() as f32,
+                    geometry.source.y() as f32,
+                    geometry.source.width() as f32,
+                    geometry.source.height() as f32,
+                ),
                 FRect::new(
                     dst.x() as f32,
                     dst.y() as f32,
@@ -990,14 +1119,11 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                             Shortcut::Fit(actual) => {
                                 use sdl3::video::FullscreenType;
                                 if canvas.window().fullscreen_state() == FullscreenType::Off {
-                                    let mut size = if actual {
-                                        geometry.panel
+                                    let size = if actual {
+                                        geometry.view_size()
                                     } else {
                                         (geometry.area.width(), geometry.area.height())
                                     };
-                                    if actual && geometry.angle % 180 != 0 {
-                                        size = (size.1, size.0);
-                                    }
                                     canvas.window_mut().set_size(size.0, size.1)?;
                                 }
                             }
@@ -1314,11 +1440,23 @@ mod tests {
             pixels: Vec::new(),
             display: serde_json::json!({"width": 10, "height": 20, "orientation": "rot90"}),
         };
-        let geometry = Geometry::new(&frame, (400, 400));
+        let geometry = Geometry::transformed(&frame, (400, 400), None, 0, (false, false), None);
         assert_eq!(geometry.area, Rect::new(0, 100, 400, 200));
         assert_eq!(geometry.point(20, 20, false), None);
         assert_eq!(geometry.point(100, 250, false), Some((0.75, 0.75)));
         assert_eq!(geometry.point(500, 50, true), Some((0.0, 0.0)));
+        let cropped = Geometry::transformed(
+            &frame,
+            (400, 400),
+            Some(0),
+            0,
+            (true, false),
+            Some([4, 8, 2, 4]),
+        );
+        assert_eq!(cropped.view_size(), (4, 8));
+        assert_eq!(cropped.source, Rect::new(2, 4, 4, 8));
+        assert_eq!(cropped.point(100, 0, false), Some((0.6, 0.2)));
+        assert_eq!(cropped.point(200, 200, false), Some((0.4, 0.4)));
     }
 
     #[test]
@@ -1335,6 +1473,7 @@ mod tests {
             area: Rect::new(20, 40, 200, 100),
             angle: 90,
             panel: (100, 200),
+            source: Rect::new(0, 0, 100, 200),
             flip: (false, false),
         };
         let batch = [

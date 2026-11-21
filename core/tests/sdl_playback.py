@@ -27,7 +27,8 @@ for server_class in (VideoLimitsServer, FakeServer):
             [sys.argv[1], "--exit-after", "5", "--no-audio", "-b", "2m",
              "--max-fps", "30", "--window-x", "-10", "--window-y", "auto",
              "--always-on-top", "--disable-screensaver", "--render-driver", "software",
-             "--background-color", "#123"],
+             "--background-color", "#123", "--display-orientation", "flip90",
+             "--crop", "2x2+0+0", "--scale", "2"],
             env=env, capture_output=True, text=True, timeout=15,
         )
         if server_class is VideoLimitsServer:
