@@ -9,15 +9,15 @@ fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
 sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
-for extra in (["--audio-dup", "--audio-buffer", "200"], ["--no-audio"], ["--no-audio-playback"]):
+for extra in (["--audio-dup", "--audio-buffer", "200"], ["--no-audio", "--no-control"], ["--no-audio-playback"]):
     with FakeServer() as peer:
         env = dict(
-            os.environ, **peer.environment, SCRCTL_RUST_SDL="1",
+            os.environ, **peer.environment,
             SCRCTL_LEGACY_EXECUTABLE="/nonexistent",
-            SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy",
+            SDL_VIDEO_DRIVER="dummy", SDL_AUDIO_DRIVER=os.getenv("SCRCTL_TEST_AUDIO_DRIVER", "dummy"),
         )
         result = subprocess.run(
-            [sys.argv[1], "--target-type", "ios", "--exit-after", "5", *extra],
+            [sys.argv[1], "--exit-after", "5", *extra],
             env=env, capture_output=True, text=True, timeout=15,
         )
         assert result.returncode == 0 and "processed 5 frames" in result.stdout, result
@@ -38,11 +38,10 @@ if len(sys.argv) > 2:
             [*sys.argv[2:], "--ignored", "forwards_sdl_input_and_releases_on_focus_loss"],
             check=True, env=env, timeout=30,
         )
-        assert peer.calls[-5:] == [
+        assert peer.calls[3:] == 2 * [
             ("input.touch", {"x": 0.5, "y": 0.75, "down": True}),
             ("input.keyboard", {"usages": [4]}),
             ("input.touch", {"x": 0.5, "y": 0.75, "down": False}),
             ("input.keyboard", {"usages": []}),
-            ("connection.close", {}),
-        ], peer.calls
+        ] + [("connection.close", {})], peer.calls
         print("PASS SDL input and focus loss")

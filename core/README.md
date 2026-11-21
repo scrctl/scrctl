@@ -140,32 +140,39 @@ feature-free launcher also uses the legacy parser. Run
 XDB submodule and a loader path to the shared XDB client to compare discovery
 output and exit status without contacting a device.
 
-### Opt-in Rust SDL mirror
+### Rust SDL3 mirror
 
-Build the launcher with `sdl2` (SDL2 must be discoverable via pkg-config).
-Set `SCRCTL_RUST_SDL=1` to use it for the basic iOS mirror:
+Build with `sdl3` and an SDL3 installation discoverable via pkg-config.
+With that build, the ordinary `scrctl` entry (or a leading `--target-type ios`)
+uses Rust for supported invocations with a positive `--exit-after`:
 
 ```sh
 XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib cargo build --manifest-path core/Cargo.toml \
-  -p scrctl-ios --bin scrctl --features sdl2 --locked
-DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib SCRCTL_RUST_SDL=1 \
-  core/target/debug/scrctl --target-type ios --wifi auto
+  -p scrctl-ios --bin scrctl --features sdl3 --locked
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
+  core/target/debug/scrctl --wifi auto --exit-after 120
 ```
 
-This path opens the default SDL playback device and consumes decoded PCM from
-a separate XDB client attachment. It supports `--no-audio`,
-`--no-audio-playback`, `--audio-dup` and `--audio-buffer`. Left click/drag
-and physical keys are forwarded by default; `-n` / `--no-control` disables
-forwarding. Active input is released on focus loss, geometry changes and exit.
-Unsupported or mixed option sets fall back to the original CLI parser.
+The Rust SDL3 path uses XDB for decoded PCM, with the default SDL playback
+device. It handles `-s`, `--wifi`, `--wifi-port`, `--no-hw-decode`,
+`--window-title` / `--title`, `--no-audio`, `--no-audio-playback`,
+`--audio-dup`, `--audio-buffer`, `--exit-after` and `-n` / `--no-control`.
+Left click, drag and physical keys are forwarded. Focus loss, geometry changes
+and shutdown release active input.
 
-The incumbent desktop frontend remains the default while shortcuts, full
-multi-touch, recording, advanced window options and platform-specific
-behavior are being migrated. The opt-in path has loopback/dummy SDL coverage;
-native window events and physical audio output still need device acceptance.
+Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
+subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
+default to C++ while its shortcuts, multi-touch and window behavior are
+being ported. Recording, headless mode, file playback, pairing, clipboard
+commands, advanced window controls (including fullscreen/crop options),
+and other unrecognized option combinations also use the legacy frontend.
 
 ```sh
 DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib \
   python3 core/tests/sdl_playback.py core/target/debug/scrctl \
-  cargo test --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --features sdl2 --locked --
+  cargo test --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --features sdl3 --locked --
 ```
+
+The fixture uses SDL dummy video/audio by default. On macOS set
+`SCRCTL_TEST_AUDIO_DRIVER=coreaudio` to exercise the system audio device
+with silent test PCM.

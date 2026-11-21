@@ -5,11 +5,13 @@ use std::time::{Duration, Instant};
 
 use clap::Parser;
 use scrctl_ios::{AudioReader, Frame, Session};
-use sdl2::audio::{AudioQueue, AudioSpecDesired};
-use sdl2::event::{Event, WindowEvent};
-use sdl2::mouse::MouseButton;
-use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::rect::Rect;
+use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
+use sdl3::event::{Event, WindowEvent};
+use sdl3::mouse::MouseButton;
+use sdl3::pixels::{Color, PixelFormat};
+use sdl3::rect::Rect;
+use sdl3::render::FRect;
+use sdl3::sys::render::SDL_LOGICAL_PRESENTATION_STRETCH;
 
 #[derive(Parser)]
 struct Options {
@@ -38,57 +40,65 @@ struct Options {
 }
 
 pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>> {
-    // Keep the incumbent frontend as the default until interaction parity is complete.
-    if std::env::var_os("SCRCTL_RUST_SDL").as_deref() != Some(std::ffi::OsStr::new("1")) {
+    let mode = std::env::var_os("SCRCTL_RUST_SDL");
+    if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
         return None;
     }
     let options = Options::try_parse_from(
         std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
     )
     .ok()?;
+    // Unlimited interactive sessions still need the legacy shortcut set.
+    if options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return None;
+    }
     Some(run(options))
 }
 
 struct Playback {
     reader: AudioReader,
-    output: AudioQueue<i16>,
+    output: AudioStreamOwner,
+    chunk_bytes: i32,
 }
 
 impl Playback {
     fn start(
-        sdl: &sdl2::Sdl,
+        sdl: &sdl3::Sdl,
         session: &mut Session,
         config: &Options,
     ) -> Result<Self, Box<dyn Error>> {
         let audio = sdl.audio()?;
         let reader = session.start_audio(config.audio_dup, config.audio_buffer)?;
         let (rate, channels) = reader.format();
-        let spec = AudioSpecDesired {
+        let spec = AudioSpec {
             freq: Some(rate),
-            channels: Some(channels),
-            samples: Some(512),
+            channels: Some(i32::from(channels)),
+            format: Some(AudioFormat::s16_sys()),
         };
-        let output = match audio.open_queue(None, &spec) {
-            Ok(output) if output.spec().freq == rate && output.spec().channels == channels => {
-                output
-            }
-            _ => {
+        let output = match audio
+            .default_playback_device()
+            .open_device_stream(Some(&spec))
+        {
+            Ok(output) => output,
+            Err(error) => {
                 drop(reader);
-                session.stop_audio()?;
-                return Err(
-                    "could not open the default SDL audio output with the XDB format".into(),
-                );
+                let _ = session.stop_audio();
+                return Err(error.into());
             }
         };
-        Ok(Self { reader, output })
+        Ok(Self {
+            reader,
+            output,
+            chunk_bytes: 960 * i32::from(channels) * 2,
+        })
     }
 
     fn fill(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.output.size() < 960 * u32::from(self.output.spec().channels) * 2 {
+        if self.output.queued_bytes()? < self.chunk_bytes {
             let samples = self.reader.read(960)?;
             if !samples.is_empty() {
-                self.output.queue_audio(&samples)?;
-                self.output.resume();
+                self.output.put_data_i16(&samples)?;
+                self.output.resume()?;
             }
         }
         Ok(())
@@ -171,13 +181,20 @@ impl Input {
 
     fn event(
         &mut self,
+        enabled: bool,
         session: &mut Session,
         event: Event,
         geometry: Geometry,
     ) -> Result<(), scrctl_ios::Error> {
+        if !enabled {
+            return Ok(());
+        }
         match event {
             Event::Window {
-                win_event: WindowEvent::FocusLost | WindowEvent::SizeChanged(_, _),
+                win_event:
+                    WindowEvent::FocusLost
+                    | WindowEvent::Resized(_, _)
+                    | WindowEvent::PixelSizeChanged(_, _),
                 ..
             } => self.release(session),
             Event::MouseButtonDown {
@@ -189,7 +206,9 @@ impl Input {
             | Event::MouseMotion { x, y, .. }
                 if matches!(event, Event::MouseButtonDown { .. }) || self.touch.is_some() =>
             {
-                if let Some((u, v)) = geometry.point(x, y, self.touch.is_some()) {
+                if let Some((u, v)) =
+                    geometry.point(x.floor() as i32, y.floor() as i32, self.touch.is_some())
+                {
                     self.touch = Some((u, v));
                     session.touch(u, v, true)?;
                 }
@@ -200,7 +219,9 @@ impl Input {
                 y,
                 ..
             } if self.touch.is_some() => {
-                let (u, v) = geometry.point(x, y, true).expect("active pointer");
+                let (u, v) = geometry
+                    .point(x.floor() as i32, y.floor() as i32, true)
+                    .expect("active pointer");
                 session.touch(u, v, false)?;
                 self.touch = None;
             }
@@ -234,7 +255,7 @@ impl Input {
 }
 
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
-    let sdl = sdl2::init()?;
+    let sdl = sdl3::init()?;
     let video = sdl.video()?;
     let mut events = sdl.event_pump()?;
     let mut session = Session::open_target(
@@ -259,11 +280,10 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         .resizable()
         .position_centered()
         .build()?
-        .into_canvas()
-        .build()?;
+        .into_canvas();
     let creator = canvas.texture_creator();
     let mut texture =
-        creator.create_texture_streaming(PixelFormatEnum::BGRA32, frame.width, frame.height)?;
+        creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
     let mut texture_size = (frame.width, frame.height);
     let mut playback = if config.no_audio || config.no_audio_playback {
         None
@@ -276,10 +296,11 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut geometry = Geometry::new(&frame, canvas.window().size());
     let result = (|| -> Result<(), Box<dyn Error>> {
         let mut count = 0;
+        let mut presented_serial = None;
         'running: loop {
             if texture_size != (frame.width, frame.height) {
                 texture = creator.create_texture_streaming(
-                    PixelFormatEnum::BGRA32,
+                    PixelFormat::BGRA32,
                     frame.width,
                     frame.height,
                 )?;
@@ -298,22 +319,35 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 (h, w)
             };
             let dst = Rect::from_center(geometry.area.center(), w, h);
-            canvas.set_logical_size(canvas.window().size().0, canvas.window().size().1)?;
+            canvas.set_logical_size(
+                canvas.window().size().0,
+                canvas.window().size().1,
+                SDL_LOGICAL_PRESENTATION_STRETCH,
+            )?;
             canvas.set_draw_color(Color::BLACK);
             canvas.clear();
             canvas.copy_ex(
                 &texture,
-                Rect::new(0, 0, geometry.panel.0, geometry.panel.1),
-                dst,
+                FRect::new(0.0, 0.0, geometry.panel.0 as f32, geometry.panel.1 as f32),
+                FRect::new(
+                    dst.x() as f32,
+                    dst.y() as f32,
+                    dst.width() as f32,
+                    dst.height() as f32,
+                ),
                 f64::from(geometry.angle),
                 None,
                 false,
                 false,
             )?;
             canvas.present();
-            count += 1;
-            if count == config.exit_after {
-                break;
+            if presented_serial != Some(frame.serial) {
+                count += 1;
+                presented_serial = Some(frame.serial);
+                if count == config.exit_after {
+                    println!("Reached --exit-after {}", config.exit_after);
+                    break;
+                }
             }
             loop {
                 for event in events.poll_iter() {
@@ -321,14 +355,24 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                         event,
                         Event::Quit { .. }
                             | Event::Window {
-                                win_event: WindowEvent::Close,
+                                win_event: WindowEvent::CloseRequested,
                                 ..
                             }
                     ) {
                         break 'running;
                     }
-                    if !config.no_control {
-                        input.event(&mut session, event, geometry)?;
+                    let redraw = matches!(
+                        event,
+                        Event::Window {
+                            win_event: WindowEvent::Resized(_, _)
+                                | WindowEvent::PixelSizeChanged(_, _)
+                                | WindowEvent::Exposed,
+                            ..
+                        }
+                    );
+                    input.event(!config.no_control, &mut session, event, geometry)?;
+                    if redraw {
+                        continue 'running;
                     }
                 }
                 if let Some(audio) = &mut playback
@@ -379,7 +423,7 @@ mod tests {
     #[test]
     #[ignore = "requires the XDB loopback fixture"]
     fn forwards_sdl_input_and_releases_on_focus_loss() {
-        use sdl2::keyboard::{Mod, Scancode};
+        use sdl3::keyboard::{Mod, Scancode};
         let port = std::env::var("SCRCTL_INPUT_FIXTURE_PORT")
             .unwrap()
             .parse()
@@ -398,8 +442,8 @@ mod tests {
                 which: 0,
                 mouse_btn: MouseButton::Left,
                 clicks: 1,
-                x: 70,
-                y: 90,
+                x: 70.0,
+                y: 90.0,
             },
             Event::KeyDown {
                 timestamp: 0,
@@ -408,6 +452,8 @@ mod tests {
                 scancode: Some(Scancode::A),
                 keymod: Mod::NOMOD,
                 repeat: false,
+                which: 0,
+                raw: 0,
             },
             Event::Window {
                 timestamp: 0,
@@ -415,9 +461,17 @@ mod tests {
                 win_event: WindowEvent::FocusLost,
             },
         ];
-        for event in batch {
-            input.event(&mut session, event, geometry).unwrap();
+        for event in batch.iter().cloned() {
+            input.event(false, &mut session, event, geometry).unwrap();
         }
+        assert!(input.touch.is_none() && input.keys.is_empty());
+        for event in batch.iter().cloned() {
+            input.event(true, &mut session, event, geometry).unwrap();
+        }
+        for event in batch.into_iter().take(2) {
+            input.event(true, &mut session, event, geometry).unwrap();
+        }
+        input.release(&mut session);
         session.close().unwrap();
     }
 }
