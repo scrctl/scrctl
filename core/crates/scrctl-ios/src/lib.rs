@@ -222,9 +222,10 @@ impl Session {
             attachment: opened["attachment"].as_str().map(str::to_owned),
             recording_pending: recording.is_some(),
         };
+        let decode = recording.is_none_or(|recording| recording.decode_video);
         let mut video = json!({
-            "decode": recording.is_none_or(|recording| recording.decode_video),
-            "hardware_decode": hardware_decode,
+            "decode": decode,
+            "hardware_decode": decode && hardware_decode,
         });
         if let Some(recording) = recording {
             if let Some(format) = recording.container {

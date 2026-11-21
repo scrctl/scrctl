@@ -31,7 +31,7 @@ for args, required in (
     (["--copy", "", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--no-window", "--no-audio", "--exit-after", "3"], ["video.start", "video.frame"]),
     (["--no-window", "--no-video", "--no-audio-playback", "--time-limit", "1", "-r", "audio.m4kv", "--record-format", "mkv"], ["recording.configure", "audio.start", "media.finish"]),
-    (["--no-window", "--no-audio", "--time-limit", "1", "-r", "encoded.mp4", "--record-orientation", "270"], ["recording.configure", "video.start", "media.finish"]),
+    (["--no-window", "--no-audio", "--time-limit", "1", "--no-hw-decode", "-r", "encoded.mp4", "--record-orientation", "270"], ["recording.configure", "video.start", "media.finish"]),
     (["--no-window", "--audio-dup", "--exit-after", "3", "-r", "capture.mp4"], ["recording.configure", "video.start", "audio.start", "media.finish"]),
     (["--no-window", "--no-audio-playback", "--exit-after", "3", "--record", "capture.mkv"], ["recording.configure", "video.start", "audio.start", "media.finish"]),
     (["--no-window", "--no-audio", "--exit-after", "3", "--record", "capture.MKV"], ["recording.configure", "video.start", "media.finish"]),
