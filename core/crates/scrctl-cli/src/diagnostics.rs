@@ -9,8 +9,10 @@ use sdl3::render::WindowCanvas;
 
 #[derive(clap::Args)]
 pub(crate) struct Diagnostics {
+    /// Print statistics every second
     #[arg(long)]
     stats: bool,
+    /// Read window at frame N into a BMP
     #[arg(long, num_args = 2, value_names = ["FRAME", "FILE"])]
     verify: Vec<OsString>,
 }

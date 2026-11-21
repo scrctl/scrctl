@@ -6,46 +6,65 @@ use xdb_engine::{DdiOptions, Error};
 
 #[derive(clap::Args)]
 pub(crate) struct Target {
+    /// Select the device by UDID
     #[arg(short = 's', long, default_value = "")]
     pub(crate) serial: String,
+    /// LAN address or auto to discover a paired device
     #[arg(long, default_value = "")]
     pub(crate) wifi: String,
+    /// RemotePairing port for a manual LAN address
     #[arg(long, default_value_t = 49152, value_parser = clap::value_parser!(u16).range(1..), requires = "wifi")]
     pub(crate) wifi_port: u16,
 }
 
 #[derive(clap::Args)]
 pub(crate) struct Commands {
+    /// List device apps
     #[arg(long)]
     list_apps: bool,
+    /// List USB and RemotePairing devices
     #[arg(long, conflicts_with = "pair")]
     list_devices: bool,
+    /// Wireless discovery timeout in milliseconds; 0 lists USB only
     #[arg(long, requires = "list_devices", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(..=60000))]
     discovery_timeout: u32,
+    /// Write device clipboard and exit
     #[arg(long)]
     copy: Option<String>,
+    /// Read device clipboard; with --copy, read it back after writing
     #[arg(long)]
     paste: bool,
+    /// Pair over USB or use --wifi auto for PIN pairing
     #[arg(long, conflicts_with_all = ["list_apps", "copy", "paste", "download_ddi", "install_ddi"])]
     pair: bool,
+    /// Pairing timeout in milliseconds
     #[arg(long, requires = "pair", default_value_t = 120000, value_parser = clap::value_parser!(u32).range(1..=300000))]
     pairing_timeout: u32,
+    /// Allow replacing an incomplete or rejected USB pairing record
     #[arg(long, requires = "pair")]
     repair_pairing: bool,
+    /// Download and verify the required developer disk image
     #[arg(long, conflicts_with_all = ["list_apps", "copy", "paste", "install_ddi"])]
     download_ddi: bool,
+    /// Download and install the required developer disk image
     #[arg(long, conflicts_with_all = ["list_apps", "copy", "paste"])]
     install_ddi: bool,
+    /// Replace the device’s mounted developer disk image
     #[arg(long, requires = "install_ddi")]
     replace_ddi: bool,
+    /// DDI installation timeout in seconds
     #[arg(long, requires = "install_ddi", default_value_t = 300, value_parser = clap::value_parser!(u32).range(1..=3600))]
     ddi_install_timeout: u32,
+    /// iOS or iPadOS version for offline DDI download
     #[arg(long, requires = "download_ddi", conflicts_with_all = ["serial", "wifi"])]
     ddi_system_version: Option<String>,
+    /// Device model for offline DDI manifest checking
     #[arg(long, requires = "ddi_system_version")]
     ddi_product_type: Option<String>,
+    /// Override the developer disk image cache directory
     #[arg(long)]
     ddi_directory: Option<String>,
+    /// DDI download timeout in seconds
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=3600))]
     ddi_download_timeout: Option<u32>,
 }

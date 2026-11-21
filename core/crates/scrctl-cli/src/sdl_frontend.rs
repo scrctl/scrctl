@@ -16,103 +16,155 @@ use sdl3::sys::render::SDL_LOGICAL_PRESENTATION_STRETCH;
 use xdb_engine::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 
 #[derive(Parser)]
+#[command(
+    name = "scrctl",
+    disable_help_flag = true,
+    about = "iOS screen mirroring and control"
+)]
 struct Options {
+    /// Show help
+    #[arg(short, long)]
+    help: bool,
+    /// Play an Annex-B HEVC file
+    #[arg(long)]
+    play: Option<std::path::PathBuf>,
     #[command(flatten)]
     target: crate::device_cli::Target,
     #[command(flatten)]
     commands: crate::device_cli::Commands,
+    /// Message language: auto, en, zh-CN
     #[arg(long, value_parser = ["auto", "en", "zh-CN"])]
     lang: Option<String>,
     #[arg(long, help = "Show version")]
     version: bool,
+    /// Do not start audio capture
     #[arg(long)]
     no_audio: bool,
+    /// Disable computer audio playback; keep encoded audio when recording MP4 or MKV
     #[arg(long)]
     no_audio_playback: bool,
+    /// Keep playing audio on the phone as well as the computer
     #[arg(long, conflicts_with = "no_audio")]
     audio_dup: bool,
+    /// Audio buffer in milliseconds
     #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(..=1000))]
     audio_buffer: u32,
     #[command(flatten)]
     diagnostics: Diagnostics,
+    /// Print input coordinates
     #[arg(long)]
     debug_input: bool,
+    /// Enable tunnel diagnostics
     #[arg(long)]
     debug_net: bool,
+    /// Launch a bundle ID; ? matches a name prefix, + terminates an existing instance
     #[arg(long, conflicts_with = "no_control")]
     start_app: Option<String>,
+    /// Inject a normalized X0,Y0,X1,Y1 swipe and exit
     #[arg(long, conflicts_with = "no_control", num_args = 1..=4, value_delimiter = ',', value_parser = parse_touch_coordinate)]
     test_touch: Vec<f64>,
+    /// Inject home, lock, volup, voldn, or mute
     #[arg(long, conflicts_with = "no_control", value_parser = parse_test_button)]
     test_button: Option<TestButton>,
+    /// Inject ASCII text into the focused device field
     #[arg(long, conflicts_with = "no_control")]
     test_type: Option<String>,
+    /// Disable device input
     #[arg(short = 'n', long)]
     no_control: bool,
+    /// Comma-separated shortcut modifiers: lctrl, rctrl, lalt, ralt, lsuper, rsuper
     #[arg(long, default_value = "lalt,lsuper", value_parser = parse_shortcut_mod)]
     shortcut_mod: Mod,
     #[arg(long, conflicts_with_all = ["no_hw_decode", "no_video"])]
     hw_decode: bool,
+    /// Use software video decoding
     #[arg(long)]
     no_hw_decode: bool,
+    /// Choose live display, its stream alias, or screenshot polling
     #[arg(long, value_parser = ["display", "stream", "screenshot"])]
     video_source: Option<String>,
+    /// Alternately force screenshot polling and resume live video at the specified times in seconds
     #[arg(long, value_parser = parse_degrade_marks)]
     test_degrade: Option<DegradeMarks>,
+    /// Request a device bitrate ceiling in bit/s, optionally suffixed K or M; 0 uses device defaults
     #[arg(short = 'b', long, value_parser = parse_bit_rate, conflicts_with = "no_video")]
     video_bit_rate: Option<u64>,
+    /// Limit decoded receiver output to 0–240 fps; 0 means unlimited
     #[arg(long, value_parser = clap::value_parser!(u16).range(..=240), conflicts_with = "no_video")]
     max_fps: Option<u16>,
     #[command(flatten)]
     window: WindowOptions,
+    /// Run without a window
     #[arg(long)]
     no_window: bool,
+    /// Start fullscreen
     #[arg(short = 'f', long)]
     fullscreen: bool,
+    /// Create a borderless window
     #[arg(long)]
     window_borderless: bool,
+    /// Window width; 0 for automatic
     #[arg(long, default_value_t = 0)]
     window_width: u32,
+    /// Window height; 0 for automatic
     #[arg(long, default_value_t = 0)]
     window_height: u32,
+    /// Finite positive initial scale; defaults to fitting the screen
     #[arg(long, value_parser = parse_scale)]
     scale: Option<f64>,
+    /// Crop displayed pixels using WxH+X+Y or W:H:X:Y
     #[arg(long, value_parser = parse_crop)]
     crop: Option<[u32; 4]>,
+    /// Display-only orientation: auto, 0/90/180/270 or flip0/flip90/flip180/flip270
     #[arg(long, value_parser = parse_display_orientation)]
     display_orientation: Vec<DisplayOrientation>,
+    /// Display and recording orientation; auto resets display only
     #[arg(long, value_parser = parse_display_orientation)]
     orientation: Vec<DisplayOrientation>,
+    /// Record MP4, MKV or raw HEVC; format follows the file extension by default
     #[arg(short = 'r', long)]
     record: Option<String>,
+    /// Override the recording format
     #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
     record_format: Option<String>,
+    /// Set clockwise MP4/MKV rotation; default is the initial device orientation
     #[arg(long, value_parser = parse_record_orientation)]
     record_orientation: Vec<DisplayOrientation>,
+    /// Do not start video capture
     #[arg(long)]
     no_video: bool,
+    /// Disable display; keep encoded video when recording
     #[arg(long)]
     no_video_playback: bool,
+    /// Disable local video and audio playback while retaining selected recording tracks
     #[arg(short = 'N', long)]
     no_playback: bool,
+    /// Run duration in seconds; 0 means unlimited
     #[arg(long, default_value_t = 0)]
     time_limit: u64,
+    /// Exit after N frames; 0 means unlimited
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
 
 #[derive(clap::Args)]
 pub(crate) struct WindowOptions {
+    /// Window title
     #[arg(long, visible_alias = "title", default_value = "scrctl")]
     window_title: String,
+    /// Window horizontal position; use auto to center
     #[arg(long, value_parser = parse_window_position, allow_negative_numbers = true)]
     window_x: Option<i32>,
+    /// Window vertical position; use auto to center
     #[arg(long, value_parser = parse_window_position, allow_negative_numbers = true)]
     window_y: Option<i32>,
+    /// Keep the window on top
     #[arg(long)]
     always_on_top: bool,
+    /// Select the SDL render driver
     #[arg(long)]
     render_driver: Option<String>,
+    /// Prevent local screen sleep
     #[arg(long)]
     disable_screensaver: bool,
     #[arg(long, default_value = "000", value_parser = parse_background)]
@@ -459,7 +511,33 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
         return None;
     }
-    let matches = Options::command()
+    let mut command = Options::command().after_help(
+        "With no arguments, mirror the connected device.
+\
+         Left click or drag sends touch. Hold Ctrl while dragging to simulate two fingers.
+\
+         Ordinary keys use the device keyboard layout and input method.
+\
+         MOD defaults to left Alt or left Super; change it with --shortcut-mod.
+\
+         Quit: MOD+Q. Fullscreen: MOD+F or F11. Clipboard paste: MOD+V.
+\
+         Home: MOD+H or middle click. Volume: MOD+Up/Down. Lock: MOD+P.
+\
+         Actual size: MOD+G. Remove margins: MOD+W or double-click a margin.
+\
+         Rotate display: MOD+Left/Right. Rotate device: MOD+R.
+\
+         Flip display: MOD+Shift+Left/Right or MOD+Shift+Up/Down.
+\
+         Pause or refresh: MOD+Z. Resume: MOD+Shift+Z.
+\
+         Audio plays on the computer by default; --audio-dup also keeps it on the phone.
+\
+         Wireless use requires pairing. --help and --version do not connect to the device.",
+    );
+    let matches = command
+        .clone()
         .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
         .ok()?;
     let mut options = Options::from_arg_matches(&matches).ok()?;
@@ -480,6 +558,16 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     };
     if chinese && !options.version {
         // Keep translated output on the existing path until the catalog is ported.
+        return None;
+    }
+    if options.help {
+        if chinese {
+            return None;
+        }
+        return Some(command.print_long_help().map(|()| 0).map_err(Into::into));
+    }
+    if options.play.is_some() {
+        // File playback still has a separate renderer and argument handler.
         return None;
     }
     let invalid = |message: &str| {
