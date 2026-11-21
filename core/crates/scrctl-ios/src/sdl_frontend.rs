@@ -7,6 +7,7 @@ use clap::Parser;
 use scrctl_ios::{AudioReader, Frame, Session, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
 use sdl3::event::{Event, WindowEvent};
+use sdl3::keyboard::{Mod, Scancode};
 use sdl3::mouse::MouseButton;
 use sdl3::pixels::{Color, PixelFormat};
 use sdl3::rect::Rect;
@@ -117,13 +118,23 @@ impl Playback {
 
 #[derive(Clone, Copy, PartialEq)]
 struct Geometry {
+    flip: (bool, bool),
     area: Rect,
     angle: i32,
     panel: (u32, u32),
 }
 
 impl Geometry {
-    fn new(frame: &Frame, (window_w, window_h): (u32, u32)) -> Self {
+    fn new(frame: &Frame, size: (u32, u32)) -> Self {
+        Self::transformed(frame, size, 0, (false, false))
+    }
+
+    fn transformed(
+        frame: &Frame,
+        (window_w, window_h): (u32, u32),
+        offset: i32,
+        flip: (bool, bool),
+    ) -> Self {
         let dimension = |key, limit| {
             frame.display[key]
                 .as_u64()
@@ -142,6 +153,7 @@ impl Geometry {
             Some("rot270") => 270,
             _ => 0,
         };
+        let angle = (angle + offset).rem_euclid(360);
         let (w, h) = if angle % 180 == 0 {
             panel
         } else {
@@ -154,6 +166,7 @@ impl Geometry {
             area: Rect::from_center((window_w as i32 / 2, window_h as i32 / 2), w, h),
             angle,
             panel,
+            flip,
         }
     }
 
@@ -163,12 +176,63 @@ impl Geometry {
         }
         let u = (f64::from(x - self.area.x()) / f64::from(self.area.width())).clamp(0.0, 1.0);
         let v = (f64::from(y - self.area.y()) / f64::from(self.area.height())).clamp(0.0, 1.0);
-        Some(match self.angle {
+        let (x, y) = match self.angle {
             90 => (v, 1.0 - u),
             180 => (1.0 - u, 1.0 - v),
             270 => (1.0 - v, u),
             _ => (u, v),
-        })
+        };
+        Some((
+            if self.flip.0 { 1.0 - x } else { x },
+            if self.flip.1 { 1.0 - y } else { y },
+        ))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Shortcut {
+    Quit,
+    Fullscreen,
+    Rotate(i32),
+    Flip(bool),
+}
+
+fn shortcut(event: &Event) -> Option<Shortcut> {
+    let Event::KeyDown {
+        scancode: Some(key),
+        keymod,
+        repeat: false,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+    let shortcut_mod = keymod.intersects(Mod::LALTMOD | Mod::LGUIMOD);
+    if *key == Scancode::F11
+        && !shift
+        && !keymod.intersects(
+            Mod::LALTMOD
+                | Mod::RALTMOD
+                | Mod::LGUIMOD
+                | Mod::RGUIMOD
+                | Mod::LCTRLMOD
+                | Mod::RCTRLMOD,
+        )
+    {
+        return Some(Shortcut::Fullscreen);
+    }
+    if !shortcut_mod {
+        return None;
+    }
+    match (*key, shift) {
+        (Scancode::Q, _) => Some(Shortcut::Quit),
+        (Scancode::F, false) => Some(Shortcut::Fullscreen),
+        (Scancode::Left, false) => Some(Shortcut::Rotate(-90)),
+        (Scancode::Right, false) => Some(Shortcut::Rotate(90)),
+        (Scancode::Left | Scancode::Right, true) => Some(Shortcut::Flip(false)),
+        (Scancode::Up | Scancode::Down, true) => Some(Shortcut::Flip(true)),
+        _ => None,
     }
 }
 
@@ -237,14 +301,22 @@ impl Input {
             }
             Event::KeyDown {
                 scancode: Some(scan),
+                keymod,
                 repeat: false,
                 ..
             }
             | Event::KeyUp {
                 scancode: Some(scan),
+                keymod,
                 repeat: false,
                 ..
             } => {
+                if matches!(scan, Scancode::LAlt | Scancode::LGui | Scancode::F11)
+                    || (matches!(event, Event::KeyDown { .. })
+                        && keymod.intersects(Mod::LALTMOD | Mod::LGUIMOD))
+                {
+                    return Ok(());
+                }
                 let usage = scan as i32;
                 // SDL's standard keyboard scancodes follow USB HID usage IDs.
                 if matches!(usage, 4..=115 | 224..=231) {
@@ -347,6 +419,8 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut input = Input::default();
     let mut geometry = Geometry::new(&frame, canvas.window().size());
     let start = Instant::now();
+    let mut rotation = 0;
+    let mut flip = (false, false);
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
@@ -359,7 +433,8 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 )?;
                 texture_size = (frame.width, frame.height);
             }
-            let new_geometry = Geometry::new(&frame, canvas.window().size());
+            let new_geometry =
+                Geometry::transformed(&frame, canvas.window().size(), rotation, flip);
             if new_geometry != geometry {
                 input.release(&mut session);
                 geometry = new_geometry;
@@ -390,8 +465,8 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 ),
                 f64::from(geometry.angle),
                 None,
-                false,
-                false,
+                geometry.flip.0,
+                geometry.flip.1,
             )?;
             canvas.present();
             if presented_serial != Some(frame.serial) {
@@ -416,6 +491,29 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                             }
                     ) {
                         break 'running;
+                    }
+                    if let Some(action) = shortcut(&event) {
+                        input.release(&mut session);
+                        match action {
+                            Shortcut::Quit => break 'running,
+                            Shortcut::Fullscreen => {
+                                use sdl3::video::FullscreenType;
+                                let enter =
+                                    canvas.window().fullscreen_state() == FullscreenType::Off;
+                                canvas.window_mut().set_fullscreen(enter)?;
+                            }
+                            Shortcut::Rotate(degrees) => {
+                                rotation = (rotation + degrees).rem_euclid(360)
+                            }
+                            Shortcut::Flip(vertical) => {
+                                if vertical ^ (geometry.angle % 180 != 0) {
+                                    flip.1 = !flip.1;
+                                } else {
+                                    flip.0 = !flip.0;
+                                }
+                            }
+                        }
+                        continue 'running;
                     }
                     let redraw = matches!(
                         event,
@@ -625,6 +723,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn local_shortcuts_respect_modifiers_and_ignore_repeat() {
+        let action = |scan, keymod, repeat| {
+            shortcut(&Event::KeyDown {
+                timestamp: 0,
+                window_id: 1,
+                keycode: None,
+                scancode: Some(scan),
+                keymod,
+                repeat,
+                which: 0,
+                raw: 0,
+            })
+        };
+        assert_eq!(
+            action(Scancode::Q, Mod::LALTMOD, false),
+            Some(Shortcut::Quit)
+        );
+        assert_eq!(action(Scancode::Q, Mod::RALTMOD, false), None);
+        assert_eq!(
+            action(Scancode::F11, Mod::NOMOD, false),
+            Some(Shortcut::Fullscreen)
+        );
+        assert_eq!(action(Scancode::F11, Mod::LSHIFTMOD, false), None);
+        assert_eq!(
+            action(Scancode::Left, Mod::LGUIMOD, false),
+            Some(Shortcut::Rotate(-90))
+        );
+        assert_eq!(
+            action(Scancode::Up, Mod::LGUIMOD | Mod::LSHIFTMOD, false),
+            Some(Shortcut::Flip(true))
+        );
+        assert_eq!(action(Scancode::Q, Mod::LALTMOD, true), None);
+    }
+
+    #[test]
     fn padded_rotated_frame_rejects_bars_and_maps_points_to_panel() {
         let frame = Frame {
             serial: 1,
@@ -655,6 +788,7 @@ mod tests {
             area: Rect::new(20, 40, 200, 100),
             angle: 90,
             panel: (100, 200),
+            flip: (false, false),
         };
         let batch = [
             Event::MouseButtonDown {
