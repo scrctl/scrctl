@@ -39,7 +39,8 @@ with TemporaryDirectory() as directory:
     print("PASS SDL3 dummy window playback")
 
     window_options = [
-        "--play", str(clip), "--crop", "64:32:4:8", "--display-orientation", "flip90",
+        "--play", str(clip), "--lang", "en", "--crop", "64:32:4:8",
+        "--orientation", "180", "--display-orientation", "flip90",
         "--window-borderless", "--window-width", "90", "--window-height", "100",
         "--background-color", "#123", "--exit-after", "3",
     ]

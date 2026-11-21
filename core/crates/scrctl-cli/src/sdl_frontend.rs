@@ -242,7 +242,7 @@ pub(crate) struct DisplayOrientation {
     pub(crate) flip: bool,
 }
 
-pub(crate) fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
+fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
     if value == "auto" {
         return Ok(DisplayOrientation::default());
     }
@@ -305,7 +305,7 @@ impl Orientations {
     }
 }
 
-pub(crate) fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
+fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
     let invalid = "Expected WxH+X+Y or W:H:X:Y";
     let parts = if let Some((width, rest)) = value.split_once('x') {
         let (height, offsets) = rest.split_once('+').ok_or(invalid)?;
@@ -330,7 +330,7 @@ pub(crate) fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
     Ok(crop)
 }
 
-pub(crate) fn parse_scale(value: &str) -> Result<f64, &'static str> {
+fn parse_scale(value: &str) -> Result<f64, &'static str> {
     value
         .parse::<f64>()
         .ok()
@@ -557,10 +557,6 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
         }
         return Some(command.print_long_help().map(|()| 0).map_err(Into::into));
     }
-    if options.play.is_some() {
-        // File playback still has a separate renderer and argument handler.
-        return None;
-    }
     let invalid = |message: &str| {
         if chinese {
             return None;
@@ -620,6 +616,27 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     if options.commands.pair_requested() && options.start_app.is_some() {
         return None;
     }
+    let playing = options
+        .play
+        .as_ref()
+        .is_some_and(|path| !path.as_os_str().is_empty());
+    if explicit("play") {
+        for (conflict, option) in [
+            (options.record.is_some(), "--record"),
+            (options.commands.pair_requested(), "--pair"),
+            (options.video_bit_rate.is_some(), "--video-bit-rate"),
+            (options.max_fps.is_some(), "--max-fps"),
+        ] {
+            if conflict {
+                return invalid(&format!("{option} excludes --play"));
+            }
+        }
+    }
+    if playing && (options.no_video || options.no_video_playback) {
+        return invalid(
+            "--play: File playback requires video; incompatible with video playback disable options",
+        );
+    }
     let orientations = Orientations::resolve(&matches);
     if options.record.as_deref() == Some("") {
         if options.record_format.is_some() {
@@ -641,7 +658,8 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     }
 
     let screenshots = options.video_source.as_deref() == Some("screenshot");
-    if options.record.is_none()
+    if !playing
+        && options.record.is_none()
         && (options.no_window || options.no_video_playback)
         && options.exit_after == 0
         && !options.hw_decode
@@ -742,6 +760,43 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     }
     if options.commands.is_requested() {
         return options.commands.run(&options.target).map(Ok);
+    }
+    if playing {
+        #[cfg(feature = "ffmpeg-next")]
+        {
+            if options
+                .start_app
+                .as_ref()
+                .is_some_and(|app| !app.is_empty())
+            {
+                eprintln!("File playback cannot launch a device app; ignoring --start-app");
+            }
+            let result = crate::file_cli::run(crate::file_cli::Options {
+                play: options.play.expect("nonempty file path validated"),
+                no_window: options.no_window,
+                diagnostics: options.diagnostics,
+                hw_decode: options.hw_decode,
+                window: options.window,
+                fullscreen: options.fullscreen,
+                window_borderless: options.window_borderless,
+                window_width: options.window_width,
+                window_height: options.window_height,
+                scale: options.scale,
+                crop: options.crop,
+                display_orientation: orientations.display,
+                time_limit: options.time_limit,
+                exit_after: options.exit_after,
+            });
+            return Some(Ok(match result {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("{error}");
+                    1
+                }
+            }));
+        }
+        #[cfg(not(feature = "ffmpeg-next"))]
+        return None;
     }
     Some(run(options, orientations).map(|()| 0))
 }

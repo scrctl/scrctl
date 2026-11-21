@@ -50,10 +50,6 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             if let Some(status) = device_cli::run_if_supported(&args) {
                 return Ok(status);
             }
-            #[cfg(all(feature = "sdl3", feature = "ffmpeg-next"))]
-            if let Some(status) = file_cli::run_if_supported(&args) {
-                return Ok(status);
-            }
             #[cfg(feature = "sdl3")]
             if let Some(result) = sdl_frontend::run_if_supported(&args) {
                 return result;

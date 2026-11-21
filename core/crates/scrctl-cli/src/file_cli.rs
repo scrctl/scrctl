@@ -1,79 +1,34 @@
 use std::{
     error::Error,
-    ffi::OsString,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use crate::sdl_frontend::{
-    DisplayOrientation, Geometry, initial_window_size, parse_crop, parse_display_orientation,
-    parse_scale,
-};
-use clap::Parser;
+use crate::sdl_frontend::{DisplayOrientation, Geometry, WindowOptions, initial_window_size};
 use ffmpeg_next as av;
 use sdl3::{
     event::{Event, WindowEvent},
     pixels::PixelFormat,
 };
 
-#[derive(Parser)]
-#[command(disable_help_flag = true)]
-struct Options {
-    #[arg(long)]
-    play: PathBuf,
-    #[arg(long)]
-    no_window: bool,
-    #[command(flatten)]
-    diagnostics: crate::diagnostics::Diagnostics,
-    #[arg(long, conflicts_with = "no_hw_decode")]
-    hw_decode: bool,
-    #[arg(long)]
-    no_hw_decode: bool,
-    #[command(flatten)]
-    window: crate::sdl_frontend::WindowOptions,
-    #[arg(short = 'f', long)]
-    fullscreen: bool,
-    #[arg(long)]
-    window_borderless: bool,
-    #[arg(long, default_value_t = 0)]
-    window_width: u32,
-    #[arg(long, default_value_t = 0)]
-    window_height: u32,
-    #[arg(long, value_parser = parse_scale)]
-    scale: Option<f64>,
-    #[arg(long, value_parser = parse_crop)]
-    crop: Option<[u32; 4]>,
-    #[arg(long, visible_alias = "orientation", value_parser = parse_display_orientation)]
-    display_orientation: Option<DisplayOrientation>,
-    #[arg(long, default_value_t = 0)]
-    time_limit: u64,
-    #[arg(long, default_value_t = 0)]
-    exit_after: u64,
+pub(crate) struct Options {
+    pub(crate) play: PathBuf,
+    pub(crate) no_window: bool,
+    pub(crate) diagnostics: crate::diagnostics::Diagnostics,
+    pub(crate) hw_decode: bool,
+    pub(crate) window: WindowOptions,
+    pub(crate) fullscreen: bool,
+    pub(crate) window_borderless: bool,
+    pub(crate) window_width: u32,
+    pub(crate) window_height: u32,
+    pub(crate) scale: Option<f64>,
+    pub(crate) crop: Option<[u32; 4]>,
+    pub(crate) display_orientation: DisplayOrientation,
+    pub(crate) time_limit: u64,
+    pub(crate) exit_after: u64,
 }
 
-pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
-    let options = Options::try_parse_from(
-        std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
-    )
-    .ok()?;
-    if options.play.as_os_str().is_empty() || options.play.to_str().is_none() {
-        return None;
-    }
-    if options.diagnostics.has_verify()
-        && (options.no_window || options.diagnostics.verify_at().is_none())
-    {
-        return None;
-    }
-    Some(match run(options) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("{error}");
-            1
-        }
-    })
-}
-
-fn run(options: Options) -> Result<(), Box<dyn Error>> {
+pub(crate) fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let path = &options.play;
     match path.metadata() {
         Ok(meta) if meta.is_file() => {}
@@ -121,7 +76,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     } else {
         Some(sdl.video()?)
     };
-    let orientation = options.display_orientation.unwrap_or_default();
+    let orientation = options.display_orientation;
     // Delay window creation until the first frame supplies the coded size.
     let mut canvas = None;
     let creator = std::cell::OnceCell::new();
