@@ -47,7 +47,7 @@ struct Options {
     #[arg(long, conflicts_with = "no_audio")]
     audio_dup: bool,
     /// Audio buffer in milliseconds
-    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(..=1000))]
+    #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
     audio_buffer: u32,
     #[command(flatten)]
     diagnostics: Diagnostics,
@@ -497,11 +497,7 @@ fn modifier_key(scan: Scancode) -> Mod {
     }
 }
 
-pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>> {
-    let mode = std::env::var_os("SCRCTL_RUST_SDL");
-    if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
-        return None;
-    }
+pub fn run_cli(args: &[OsString]) -> Result<i32, Box<dyn Error>> {
     let mut command = Options::command().after_help(
         "With no arguments, mirror the connected device.
 \
@@ -527,11 +523,17 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
 \
          Wireless use requires pairing. --help and --version do not connect to the device.",
     );
-    let matches = command
+    let matches = match command
         .clone()
         .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
-        .ok()?;
-    let mut options = Options::from_arg_matches(&matches).ok()?;
+    {
+        Ok(matches) => matches,
+        Err(error) => {
+            error.print()?;
+            return Ok(2);
+        }
+    };
+    let mut options = Options::from_arg_matches(&matches)?;
     let explicit = |id| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine);
     let chinese = match options.lang.as_deref() {
         Some("en") => false,
@@ -551,18 +553,16 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
         if chinese {
             command = crate::help::localize_chinese(command);
         }
-        return Some(command.print_long_help().map(|()| 0).map_err(Into::into));
-    }
-    if chinese && !options.version {
-        // Keep translated runtime messages on the existing path for now.
-        return None;
+        command.print_long_help()?;
+        return Ok(0);
     }
     let invalid = |message: &str| {
         if chinese {
-            return None;
+            eprintln!("参数错误：{message}");
+        } else {
+            eprintln!("{message}");
         }
-        eprintln!("{message}");
-        Some(Ok(2))
+        Ok(2)
     };
     if !options.test_touch.is_empty() && options.test_touch.len() != 4 {
         return invalid(&format!(
@@ -576,9 +576,12 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     if options.target.wifi == "auto" && explicit("wifi_port") {
         return invalid("--wifi-port: Use a manual LAN address; auto uses discovered SRV ports");
     }
-    options
+    if let Err(message) = options
         .commands
-        .validate(&options.target, explicit("serial"))?;
+        .validate(&options.target, explicit("serial"))
+    {
+        return invalid(message);
+    }
     if options.no_playback {
         options.no_video_playback = true;
         options.no_audio_playback = true;
@@ -611,10 +614,13 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
                 "{flag}: Use only DDI, device selection and language options with this standalone command"
             ));
         }
-        return options.commands.run(&options.target).map(Ok);
+        return Ok(options
+            .commands
+            .run(&options.target)
+            .expect("device command was selected"));
     }
     if options.commands.pair_requested() && options.start_app.is_some() {
-        return None;
+        return invalid("--pair excludes --start-app");
     }
     let playing = options
         .play
@@ -746,22 +752,22 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
     {
         return invalid("--no-playback: Nothing to do: enable media, recording or device control");
     }
-    if (screenshots && options.record.is_some())
-        || options
-            .start_app
-            .as_ref()
-            .is_some_and(|app| !app.is_empty() && app.trim_start_matches(['?', '+']).is_empty())
-    {
-        return None;
+    if screenshots && options.record.is_some() {
+        return invalid("--record: Screenshot polling cannot be recorded");
     }
     if options.version {
         println!("scrctl {}", env!("SCRCTL_PUBLIC_VERSION"));
-        return Some(Ok(0));
+        return Ok(0);
     }
     if options.commands.is_requested() {
-        return options.commands.run(&options.target).map(Ok);
+        return Ok(options
+            .commands
+            .run(&options.target)
+            .expect("device command was selected"));
     }
     if playing {
+        #[cfg(not(feature = "ffmpeg-next"))]
+        return Err("This build does not include file playback".into());
         #[cfg(feature = "ffmpeg-next")]
         {
             if options
@@ -787,18 +793,23 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
                 time_limit: options.time_limit,
                 exit_after: options.exit_after,
             });
-            return Some(Ok(match result {
+            return Ok(match result {
                 Ok(()) => 0,
                 Err(error) => {
                     eprintln!("{error}");
                     1
                 }
-            }));
+            });
         }
-        #[cfg(not(feature = "ffmpeg-next"))]
-        return None;
     }
-    Some(run(options, orientations).map(|()| 0))
+    if options
+        .start_app
+        .as_ref()
+        .is_some_and(|app| !app.is_empty() && app.trim_start_matches(['?', '+']).is_empty())
+    {
+        return invalid("--start-app: Requires a bundle ID or name prefix");
+    }
+    run(options, orientations).map(|()| 0)
 }
 
 struct Playback {

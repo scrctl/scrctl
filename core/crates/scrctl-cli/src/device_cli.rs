@@ -87,7 +87,8 @@ pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
     .ok()?;
     options
         .commands
-        .validate(&options.target, !options.target.serial.is_empty())?;
+        .validate(&options.target, !options.target.serial.is_empty())
+        .ok()?;
     options.commands.run(&options.target)
 }
 
@@ -111,38 +112,48 @@ impl Commands {
         self.pair
     }
 
-    pub(crate) fn validate(&self, target: &Target, serial_explicit: bool) -> Option<()> {
-        let ddi = self.download_ddi || self.install_ddi;
-        if !ddi && (self.ddi_directory.is_some() || self.ddi_download_timeout.is_some()) {
-            return None;
+    pub(crate) fn validate(
+        &self,
+        target: &Target,
+        serial_explicit: bool,
+    ) -> Result<(), &'static str> {
+        if !self.is_ddi() && (self.ddi_directory.is_some() || self.ddi_download_timeout.is_some()) {
+            return Err(
+                "--ddi-directory/--ddi-download-timeout: Requires --download-ddi or --install-ddi",
+            );
         }
         if self.pair && !target.wifi.is_empty() && (target.wifi != "auto" || self.repair_pairing) {
-            return None;
+            return Err(
+                "--pair: Wireless first pairing requires --wifi auto; existing records cannot be repaired wirelessly",
+            );
         }
-        if ddi
-            && ((self.ddi_system_version.is_none()
-                && target.serial.trim().is_empty()
-                && serial_explicit)
-                || self.ddi_system_version.as_deref().is_some_and(|version| {
-                    let parts: Vec<_> = version.split('.').collect();
-                    parts.len() > 3
-                        || parts
-                            .iter()
-                            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
-                })
-                || self
-                    .ddi_product_type
-                    .as_deref()
-                    .is_some_and(|name| name.trim().is_empty())
-                || self
-                    .ddi_directory
-                    .as_deref()
-                    .is_some_and(|path| path.trim().is_empty()))
+        if self.is_ddi() && serial_explicit && target.serial.trim().is_empty() {
+            return Err("--serial: Requires a nonempty device identifier");
+        }
+        if let Some(version) = &self.ddi_system_version {
+            let mut parts = version.split('.');
+            if parts.clone().count() > 3
+                || parts
+                    .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+            {
+                return Err("--ddi-system-version: Expected a numeric system version");
+            }
+        }
+        if self
+            .ddi_product_type
+            .as_ref()
+            .is_some_and(|name| name.trim().is_empty())
         {
-            return None;
+            return Err("--ddi-product-type: Requires a nonempty device identifier");
         }
-
-        Some(())
+        if self
+            .ddi_directory
+            .as_ref()
+            .is_some_and(|path| path.trim().is_empty())
+        {
+            return Err("--ddi-directory: Requires a nonempty directory path");
+        }
+        Ok(())
     }
 
     pub(crate) fn run(&self, target: &Target) -> Option<i32> {

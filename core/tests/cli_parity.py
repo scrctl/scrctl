@@ -25,6 +25,9 @@ for args in (
             assert direct.returncode == forwarded.returncode == 0 and not forwarded.stderr
             assert options(direct.stdout) == options(forwarded.stdout) - {b"--hw-decode", b"--title"}
             continue
+        if native and direct.returncode == 2:
+            assert forwarded.returncode == 2 and not forwarded.stdout and forwarded.stderr, forwarded
+            continue
         if (direct.returncode, direct.stdout, direct.stderr) != (
             forwarded.returncode, forwarded.stdout, forwarded.stderr
         ):
@@ -70,3 +73,11 @@ if native:
         help_text = result.stdout.decode("utf-8")
         assert "iOS 屏幕镜像与控制" in help_text and "显示帮助" in help_text and "--wifi" in help_text
         print("PASS native Chinese help", *args)
+
+    # Prove the full-featured CLI owns parse failures as well as valid commands.
+    for args in (["--definitely-invalid"], ["--audio-buffer", "-1"], ["--ddi-product-type", "Model"]):
+        result = subprocess.run([launcher, *args], env=native_env, capture_output=True, timeout=10)
+        assert result.returncode == 2 and not result.stdout and result.stderr, result
+    result = subprocess.run([launcher, "--version", "--audio-buffer", "1001"],
+                            env=native_env, capture_output=True, timeout=10)
+    assert result.returncode == 0 and result.stdout.startswith(b"scrctl "), result

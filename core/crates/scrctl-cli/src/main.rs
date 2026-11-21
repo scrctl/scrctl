@@ -11,7 +11,11 @@ mod help;
 #[cfg(feature = "sdl3")]
 mod sdl_frontend;
 
-use std::{env, error::Error, ffi::OsString, io, path::PathBuf, process::Command};
+#[cfg(any(feature = "xdb", not(feature = "sdl3")))]
+use std::io;
+use std::{env, error::Error, ffi::OsString};
+#[cfg(not(feature = "sdl3"))]
+use std::{path::PathBuf, process::Command};
 
 fn main() {
     match launch() {
@@ -44,25 +48,25 @@ fn launch() -> Result<i32, Box<dyn Error>> {
         Some(Some("mac")) => desktop::run(true, args),
         Some(Some("ios")) | None => {
             let args: Vec<_> = args.collect();
-            #[cfg(feature = "xdb")]
-            if let Some(timeout) = discovery_timeout(&args) {
-                return Ok(list_devices(timeout));
-            }
-            #[cfg(all(feature = "xdb", not(feature = "sdl3")))]
-            if let Some(status) = device_cli::run_if_supported(&args) {
-                return Ok(status);
-            }
             #[cfg(feature = "sdl3")]
-            if let Some(result) = sdl_frontend::run_if_supported(&args) {
-                return result;
+            {
+                sdl_frontend::run_cli(&args)
             }
-            launch_legacy(args.into_iter())
-                .map_err(|error| format!("could not launch the C++ frontend: {error}").into())
+            #[cfg(not(feature = "sdl3"))]
+            {
+                #[cfg(feature = "xdb")]
+                if let Some(status) = device_cli::run_if_supported(&args) {
+                    return Ok(status);
+                }
+                launch_legacy(args.into_iter())
+                    .map_err(|error| format!("could not launch the C++ frontend: {error}").into())
+            }
         }
         _ => Err("expected --target-type ios, vnc, or mac".into()),
     }
 }
 
+#[cfg(not(feature = "sdl3"))]
 fn launch_legacy(args: impl Iterator<Item = OsString>) -> io::Result<i32> {
     let frontend = match env::var_os("SCRCTL_LEGACY_EXECUTABLE") {
         Some(path) => PathBuf::from(path),
@@ -89,32 +93,6 @@ fn launch_legacy(args: impl Iterator<Item = OsString>) -> io::Result<i32> {
     }
     #[cfg(not(unix))]
     command.status().map(|status| status.code().unwrap_or(1))
-}
-
-// Only dispatch complete, unambiguous invocations. The original parser is
-// still responsible for mixed options, diagnostics, and alternate forms.
-#[cfg(feature = "xdb")]
-fn discovery_timeout(args: &[OsString]) -> Option<u32> {
-    let value = match args {
-        [flag] if flag == "--list-devices" => return Some(3000),
-        [flag, option, value] if flag == "--list-devices" && option == "--discovery-timeout" => {
-            value.to_str()?
-        }
-        [option, value, flag] if flag == "--list-devices" && option == "--discovery-timeout" => {
-            value.to_str()?
-        }
-        [flag, option] if flag == "--list-devices" => {
-            option.to_str()?.strip_prefix("--discovery-timeout=")?
-        }
-        [option, flag] if flag == "--list-devices" => {
-            option.to_str()?.strip_prefix("--discovery-timeout=")?
-        }
-        _ => return None,
-    };
-    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    value.parse().ok().filter(|value| *value <= 60_000)
 }
 
 #[cfg(feature = "xdb")]
