@@ -94,3 +94,18 @@ if len(sys.argv) > 2:
             ("connection.close", {}),
         ], peer.calls
         print("PASS SDL input and focus loss")
+
+
+    with FakeServer() as peer:
+        env = dict(os.environ, SCRCTL_INPUT_FIXTURE_PORT=str(peer.server_address[1]))
+        subprocess.run(
+            [*sys.argv[2:], "--ignored", "clipboard_readback_and_stale_paste"],
+            check=True, env=env, timeout=30,
+        )
+        assert ("clipboard.set", {"text": "scrctl 夹具"}) in peer.calls
+        assert [params["usages"] for method, params in peer.calls if method == "input.keyboard"] == [
+            [227], [227, 25], [],
+        ], peer.calls
+        first_paste = peer.methods().index("input.keyboard")
+        assert "clipboard.get" in peer.methods()[:first_paste], peer.calls
+        print("PASS clipboard readback and stale-paste suppression")

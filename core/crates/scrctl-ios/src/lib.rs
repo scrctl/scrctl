@@ -340,6 +340,52 @@ impl Session {
             .map(|_| ())
     }
 
+    pub fn prepare_clipboard(
+        &self,
+        text: String,
+        cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<(), Error>>, Error> {
+        use std::sync::atomic::Ordering::Acquire;
+        let attachment = self
+            .attachment
+            .clone()
+            .ok_or_else(|| Error::Client("Missing XDB session attachment".into()))?;
+        let port = self.port;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("scrctl-clipboard".into())
+            .spawn(move || {
+                let sync = || -> Result<(), Error> {
+                    let mut client = Client::connect(port)?;
+                    client.request(c"connection.attach", json!({"attachment": attachment}))?;
+                    if cancelled.load(Acquire) {
+                        return Ok(());
+                    }
+                    client.request(c"clipboard.set", json!({"text": &text}))?;
+                    if cancelled.load(Acquire) {
+                        return Ok(());
+                    }
+                    let (readback, _) = client.request(c"clipboard.get", json!({}))?;
+                    if readback["text"].as_str() != Some(&text) {
+                        return Err(Error::Client(
+                            "Device clipboard text did not match; paste skipped".into(),
+                        ));
+                    }
+                    Ok(())
+                };
+                let _ = sender.send(sync());
+            })
+            .map_err(|error| Error::Client(error.to_string()))?;
+        Ok(receiver)
+    }
+
+    pub fn paste_keyboard(&mut self) -> Result<(), Error> {
+        self.keyboard(&[0xe3])?;
+        let press = self.keyboard(&[0xe3, 0x19]);
+        let release = self.keyboard(&[]);
+        press.and(release)
+    }
+
     pub fn rotate_device(&mut self) -> Result<(), Error> {
         self.client
             .request(c"display.rotate", json!({}))

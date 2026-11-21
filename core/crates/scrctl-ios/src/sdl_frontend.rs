@@ -242,6 +242,7 @@ enum Shortcut {
     Rotate(i32),
     Flip(bool),
     RotateDevice,
+    Paste,
     Pause(bool),
     Fit(bool),
 }
@@ -279,6 +280,7 @@ fn shortcut(event: &Event, shortcut_mods: Mod) -> Option<Shortcut> {
         (Scancode::Z, resume) => Some(Shortcut::Pause(resume)),
         (Scancode::G, false) => Some(Shortcut::Fit(true)),
         (Scancode::W, false) => Some(Shortcut::Fit(false)),
+        (Scancode::V, false) => Some(Shortcut::Paste),
         (Scancode::R, false) => Some(Shortcut::RotateDevice),
         (Scancode::F, false) => Some(Shortcut::Fullscreen),
         (Scancode::Left, false) => Some(Shortcut::Rotate(-90)),
@@ -286,6 +288,60 @@ fn shortcut(event: &Event, shortcut_mods: Mod) -> Option<Shortcut> {
         (Scancode::Left | Scancode::Right, true) => Some(Shortcut::Flip(false)),
         (Scancode::Up | Scancode::Down, true) => Some(Shortcut::Flip(true)),
         _ => None,
+    }
+}
+
+struct PendingPaste {
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    result: std::sync::mpsc::Receiver<Result<(), scrctl_ios::Error>>,
+    until: Instant,
+}
+
+impl PendingPaste {
+    fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn start(session: &Session, text: String) -> Result<Self, scrctl_ios::Error> {
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let result = session.prepare_clipboard(text, cancelled.clone())?;
+        Ok(Self {
+            cancelled,
+            result,
+            until: Instant::now() + Duration::from_secs(5),
+        })
+    }
+
+    fn poll(&self, session: &mut Session, valid: bool) -> bool {
+        use std::sync::mpsc::TryRecvError;
+        if !valid {
+            self.cancel();
+        }
+        if !self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+            && Instant::now() >= self.until
+        {
+            self.cancel();
+            eprintln!("Clipboard paste timed out");
+        }
+        match self.result.try_recv() {
+            Ok(result) => {
+                if !self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+                    && let Err(error) = result.and_then(|()| session.paste_keyboard())
+                {
+                    eprintln!("Clipboard paste failed: {error}");
+                }
+                true
+            }
+            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Disconnected) => true,
+        }
+    }
+}
+
+impl Drop for PendingPaste {
+    fn drop(&mut self) {
+        self.cancel();
     }
 }
 
@@ -713,6 +769,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut flip = (false, false);
     let mut paused = false;
     let mut refresh = false;
+    let mut paste: Option<PendingPaste> = None;
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
@@ -729,6 +786,9 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
             let new_geometry =
                 Geometry::transformed(&frame, canvas.window().size(), rotation, flip);
             if new_geometry != geometry {
+                if let Some(pending) = &paste {
+                    pending.cancel();
+                }
                 input.release(&mut session);
                 geometry = new_geometry;
             }
@@ -786,8 +846,29 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                         break 'running;
                     }
                     if let Some(action) = shortcut(&event, input.shortcut_mods) {
+                        if action == Shortcut::Paste {
+                            if !config.no_control
+                                && !paused
+                                && paste.is_none()
+                                && canvas.window().has_input_focus()
+                                && input.keys.is_empty()
+                                && input.touch.is_none()
+                                && input.fingers.is_empty()
+                                && let Ok(text) = video.clipboard().clipboard_text()
+                            {
+                                match PendingPaste::start(&session, text) {
+                                    Ok(pending) => paste = Some(pending),
+                                    Err(error) => eprintln!("Clipboard paste failed: {error}"),
+                                }
+                            }
+                            continue;
+                        }
+                        if let Some(pending) = &paste {
+                            pending.cancel();
+                        }
                         input.release(&mut session);
                         match action {
+                            Shortcut::Paste => unreachable!(),
                             Shortcut::Quit => break 'running,
                             Shortcut::Fit(actual) => {
                                 use sdl3::video::FullscreenType;
@@ -840,6 +921,20 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                             ..
                         }
                     );
+                    if (redraw
+                        || matches!(
+                            event,
+                            Event::Window {
+                                win_event: WindowEvent::FocusLost,
+                                ..
+                            } | Event::MouseButtonDown { .. }
+                                | Event::FingerDown { .. }
+                                | Event::KeyDown { repeat: false, .. }
+                        ))
+                        && let Some(pending) = &paste
+                    {
+                        pending.cancel();
+                    }
                     input.event(
                         !config.no_control && !paused,
                         &mut session,
@@ -850,6 +945,18 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                     if redraw {
                         continue 'running;
                     }
+                }
+                if let Some(pending) = &paste
+                    && pending.poll(
+                        &mut session,
+                        !paused
+                            && canvas.window().has_input_focus()
+                            && input.keys.is_empty()
+                            && input.touch.is_none()
+                            && input.fingers.is_empty(),
+                    )
+                {
+                    paste = None;
                 }
                 fill_playback(&mut playback, &mut session, config.record.is_some());
                 if let Some(next) = session.next_frame(frame_serial, 8)? {
@@ -863,6 +970,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         }
         Ok(count)
     })();
+    drop(paste);
     input.release(&mut session);
     drop(playback);
     let finish = if config.record.is_some() {
@@ -1197,6 +1305,29 @@ mod tests {
             .unwrap();
         input.release(&mut session);
         session.rotate_device().unwrap();
+        session.close().unwrap();
+    }
+    #[test]
+    #[ignore = "requires the XDB loopback fixture"]
+    fn clipboard_readback_and_stale_paste() {
+        let port = std::env::var("SCRCTL_INPUT_FIXTURE_PORT")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut session = Session::open(port, "mock-iphone", "wifi", false).unwrap();
+        for (text, valid) in [("scrctl 夹具", true), ("stale", false)] {
+            let pending = PendingPaste::start(&session, text.into()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            // The invalid case must never send paste keystrokes, even if
+            // synchronization runs before the first poll.
+            while Instant::now() < deadline {
+                if pending.poll(&mut session, valid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(Instant::now() < deadline);
+        }
         session.close().unwrap();
     }
 }
