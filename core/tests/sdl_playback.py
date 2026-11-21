@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import signal
+import time
 
 root = Path(__file__).resolve().parents[2]
 fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
@@ -30,6 +32,43 @@ for extra in (["--audio-dup", "--audio-buffer", "200"], ["--no-audio", "--no-con
             assert not any(method.startswith("audio.") for method in peer.methods()), peer.calls
         print("PASS", *extra)
 
+
+
+with FakeServer() as peer:
+    env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+               SDL_AUDIO_DRIVER="dummy", SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+    result = subprocess.run(
+        [sys.argv[1], "--exit-after", "5", "--record", "window.mkv",
+         "--record-orientation", "90", "--no-audio-playback"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0 and "processed 5 frames" in result.stdout, result
+    config = next(params for method, params in peer.calls if method == "recording.configure")
+    assert (config["orientation"], config["orientation_from_device"], config["audio"]) == (90, False, True)
+    assert peer.methods()[-2:] == ["media.finish", "connection.close"], peer.calls
+    print("PASS windowed recording with explicit orientation")
+
+
+if os.name == "posix":
+    with FakeServer() as peer:
+        env = dict(os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+        args = [sys.argv[1], "--no-window", "--no-video", "--no-audio-playback",
+                "--record", "audio.mkv"]
+        with subprocess.Popen(args, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+            try:
+                deadline = time.monotonic() + 5
+                while "media.status" not in peer.methods():
+                    assert child.poll() is None and time.monotonic() < deadline, peer.calls
+                    time.sleep(0.01)
+                child.send_signal(signal.SIGINT)
+                out, err = child.communicate(timeout=10)
+                assert child.returncode == 0 and b"audio recording finalized" in out, (out, err)
+                assert peer.methods()[-2:] == ["media.finish", "connection.close"], peer.calls
+                assert "video.start" not in peer.methods() and "audio.read" not in peer.methods()
+                print("PASS unlimited audio-only recording finalizes on SIGINT")
+            finally:
+                if child.poll() is None:
+                    child.kill()
 
 if len(sys.argv) > 2:
     with FakeServer() as peer:

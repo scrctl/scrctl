@@ -157,6 +157,9 @@ pub struct VideoRecording<'a> {
     pub path: &'a str,
     pub container: Option<&'a str>,
     pub audio: bool,
+    pub video: bool,
+    pub decode_video: bool,
+    pub orientation: Option<u16>,
 }
 
 pub struct Session {
@@ -164,6 +167,7 @@ pub struct Session {
     open: bool,
     port: u16,
     attachment: Option<String>,
+    recording_pending: bool,
 }
 
 impl Session {
@@ -216,26 +220,28 @@ impl Session {
             open: true,
             port,
             attachment: opened["attachment"].as_str().map(str::to_owned),
+            recording_pending: recording.is_some(),
         };
-        let mut video = json!({"decode": true, "hardware_decode": hardware_decode});
+        let mut video = json!({
+            "decode": recording.is_none_or(|recording| recording.decode_video),
+            "hardware_decode": hardware_decode,
+        });
         if let Some(recording) = recording {
             if let Some(format) = recording.container {
                 session.client.request(
                     c"recording.configure",
                     json!({
-                        "path": recording.path, "format": format, "video": true, "audio": recording.audio,
-                        "orientation": 0, "orientation_from_device": true,
+                        "path": recording.path, "format": format, "video": recording.video, "audio": recording.audio,
+                        "orientation": recording.orientation.unwrap_or(0),
+                        "orientation_from_device": recording.orientation.is_none(),
                     }),
                 )?;
             } else {
                 video["record_path"] = json!(recording.path);
             }
         }
-        if let Err(error) = session.client.request(c"video.start", video) {
-            if recording.is_some() {
-                let _ = session.finish_media();
-            }
-            return Err(error);
+        if recording.is_none_or(|recording| recording.video) {
+            session.client.request(c"video.start", video)?;
         }
         Ok(session)
     }
@@ -293,7 +299,18 @@ impl Session {
 }
 
 impl Session {
+    pub fn check_media(&mut self) -> Result<(), Error> {
+        let (value, _) = self.client.request(c"media.status", json!({}))?;
+        for field in ["error", "recording_error"] {
+            if let Some(error) = value[field].as_str().filter(|value| !value.is_empty()) {
+                return Err(Error::Client(error.to_owned()));
+            }
+        }
+        Ok(())
+    }
+
     pub fn finish_media(&mut self) -> Result<(), Error> {
+        self.recording_pending = false;
         self.client.request(c"media.finish", json!({})).map(|_| ())
     }
 
@@ -313,6 +330,9 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        if self.recording_pending {
+            let _ = self.finish_media();
+        }
         let _ = self.close_connection();
     }
 }

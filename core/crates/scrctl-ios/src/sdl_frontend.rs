@@ -41,6 +41,12 @@ struct Options {
     record: Option<String>,
     #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
     record_format: Option<String>,
+    #[arg(long, value_parser = ["0", "90", "180", "270"])]
+    record_orientation: Option<String>,
+    #[arg(long)]
+    no_video: bool,
+    #[arg(long, default_value_t = 0)]
+    time_limit: u64,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
@@ -54,17 +60,20 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
     )
     .ok()?;
-    // Unlimited interactive sessions still need the legacy shortcut set.
-    if options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")) {
-        return None;
-    }
-    if options.record.as_deref().is_some_and(|path| {
-        path.is_empty()
-            || !options.no_window
-            || options.exit_after == 0
-            || !(options.no_audio
-                || recording_container(path, options.record_format.as_deref()).is_some())
-    }) {
+    if let Some(path) = options.record.as_deref() {
+        let container = recording_container(path, options.record_format.as_deref()).is_some();
+        let rotation = options.record_orientation.as_deref().unwrap_or("0");
+        if path.is_empty()
+            || (options.no_video && (!container || options.no_audio || options.exit_after != 0))
+            || ((!container || options.no_video) && rotation != "0")
+            || (!container && options.no_audio_playback && options.audio_dup)
+        {
+            return None;
+        }
+    } else if options.no_video
+        || options.record_orientation.is_some()
+        || (options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")))
+    {
         return None;
     }
     Some(run(options))
@@ -283,6 +292,12 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 path,
                 container,
                 audio: container.is_some() && !config.no_audio,
+                video: !config.no_video,
+                decode_video: !config.no_video && (!config.no_window || config.exit_after > 0),
+                orientation: config
+                    .record_orientation
+                    .as_deref()
+                    .and_then(|s| s.parse().ok()),
             })
         })
         .transpose()?;
@@ -295,36 +310,28 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         !config.no_hw_decode,
         recording,
     )?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let first_frame = (|| -> Result<Frame, Box<dyn Error>> {
+    let decode_video = recording.is_none_or(|recording| recording.decode_video);
+    let first_frame = if decode_video {
+        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if let Some(frame) = session.next_frame(0, 20)? {
-                return Ok(frame);
+                break Some(frame);
             }
             if Instant::now() >= deadline {
                 return Err("No first frame from XDB within five seconds".into());
             }
         }
-    })();
-    let mut frame = match first_frame {
-        Ok(frame) => frame,
-        Err(error) => {
-            if recording.is_some() {
-                let _ = session.finish_media();
-            }
-            return Err(error);
-        }
+    } else {
+        None
     };
     if config.no_audio_playback && recording.is_some_and(|recording| recording.audio) {
-        if let Err(error) = session.start_recording_audio(config.audio_dup, config.audio_buffer) {
-            let _ = session.finish_media();
-            return Err(error.into());
-        }
+        session.start_recording_audio(config.audio_dup, config.audio_buffer)?;
         println!("Local audio playback disabled; recording original AAC without PCM decoding");
     }
-    if config.no_window {
-        return run_headless(&sdl, events, session, frame, &config);
+    if config.no_window || config.no_video {
+        return run_headless(&sdl, events, session, first_frame, &config);
     }
+    let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
     let mut canvas = video
         .window(&config.window_title, 420, 840)
@@ -339,7 +346,8 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut playback = start_playback(&sdl, &mut session, &config)?;
     let mut input = Input::default();
     let mut geometry = Geometry::new(&frame, canvas.window().size());
-    let result = (|| -> Result<(), Box<dyn Error>> {
+    let start = Instant::now();
+    let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
         'running: loop {
@@ -395,6 +403,9 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 }
             }
             loop {
+                if reached_time_limit(start, config.time_limit) {
+                    break 'running;
+                }
                 for event in events.poll_iter() {
                     if matches!(
                         event,
@@ -427,15 +438,30 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        println!("Finished: processed {count} frames");
-        Ok(())
+        Ok(count)
     })();
     input.release(&mut session);
     drop(playback);
+    let finish = if config.record.is_some() {
+        session.finish_media()
+    } else {
+        Ok(())
+    };
     let close = session.close();
-    result?;
+    let count = result?;
+    finish?;
     close?;
+    println!("Finished: processed {count} frames");
     Ok(())
+}
+
+fn reached_time_limit(start: Instant, seconds: u64) -> bool {
+    if seconds > 0 && start.elapsed() >= Duration::from_secs(seconds) {
+        println!("Reached --time-limit {seconds} seconds");
+        true
+    } else {
+        false
+    }
 }
 
 fn start_playback(
@@ -495,9 +521,24 @@ fn run_headless(
     sdl: &sdl3::Sdl,
     mut events: sdl3::EventPump,
     mut session: Session,
-    first_frame: Frame,
+    first_frame: Option<Frame>,
     config: &Options,
 ) -> Result<(), Box<dyn Error>> {
+    let mut background = if config.no_window {
+        None
+    } else {
+        let mut canvas = sdl
+            .video()?
+            .window(&config.window_title, 640, 480)
+            .resizable()
+            .position_centered()
+            .build()?
+            .into_canvas();
+        canvas.set_draw_color(Color::BLACK);
+        canvas.clear();
+        canvas.present();
+        Some(canvas)
+    };
     let mut playback = match start_playback(sdl, &mut session, config) {
         Ok(playback) => playback,
         Err(error) => {
@@ -506,24 +547,55 @@ fn run_headless(
         }
     };
     let result = (|| -> Result<u64, scrctl_ios::Error> {
-        let mut count = 1;
-        let mut serial = first_frame.serial;
+        let decode_video = first_frame.is_some();
+        let mut count = u64::from(decode_video);
+        let mut serial = first_frame.as_ref().map_or(0, |frame| frame.serial);
         drop(first_frame);
+        let start = Instant::now();
+        let mut next_status = start;
         loop {
-            if count == config.exit_after {
+            if reached_time_limit(start, config.time_limit) {
+                break;
+            }
+            if config.exit_after > 0 && count == config.exit_after {
                 println!("Reached --exit-after {}", config.exit_after);
                 break;
             }
-            if events
-                .poll_iter()
-                .any(|event| matches!(event, Event::Quit { .. }))
-            {
+            let mut quit = false;
+            for event in events.poll_iter() {
+                match event {
+                    Event::Quit { .. }
+                    | Event::Window {
+                        win_event: WindowEvent::CloseRequested,
+                        ..
+                    } => quit = true,
+                    Event::Window {
+                        win_event: WindowEvent::Resized(_, _) | WindowEvent::Exposed,
+                        ..
+                    } => {
+                        if let Some(canvas) = &mut background {
+                            canvas.clear();
+                            canvas.present();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if quit {
                 break;
             }
             fill_playback(&mut playback, &mut session, config.record.is_some());
-            if let Some(frame) = session.next_frame(serial, 8)? {
-                serial = frame.serial;
-                count += 1;
+            if decode_video {
+                if let Some(frame) = session.next_frame(serial, 8)? {
+                    serial = frame.serial;
+                    count += 1;
+                }
+            } else {
+                if Instant::now() >= next_status {
+                    session.check_media()?;
+                    next_status = Instant::now() + Duration::from_secs(1);
+                }
+                std::thread::sleep(Duration::from_millis(10));
             }
         }
         Ok(count)
@@ -538,7 +610,13 @@ fn run_headless(
     let count = result?;
     finish?;
     close?;
-    println!("Finished: processed {count} frames");
+    if config.no_video {
+        println!("Finished: audio recording finalized");
+    } else if count == 0 && config.record.is_some() {
+        println!("Finished: encoded video recording finalized");
+    } else {
+        println!("Finished: processed {count} frames");
+    }
     Ok(())
 }
 
