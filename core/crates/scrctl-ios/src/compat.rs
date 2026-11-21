@@ -32,8 +32,15 @@ fn launch() -> Result<i32, Box<dyn Error>> {
     match target.as_ref().map(|arg| arg.to_str()) {
         Some(Some("vnc")) => desktop::run(false, args),
         Some(Some("mac")) => desktop::run(true, args),
-        Some(Some("ios")) | None => launch_legacy(args)
-            .map_err(|error| format!("could not launch the C++ frontend: {error}").into()),
+        Some(Some("ios")) | None => {
+            let args: Vec<_> = args.collect();
+            #[cfg(feature = "xdb")]
+            if let Some(timeout) = discovery_timeout(&args) {
+                return Ok(list_devices(timeout));
+            }
+            launch_legacy(args.into_iter())
+                .map_err(|error| format!("could not launch the C++ frontend: {error}").into())
+        }
         _ => Err("expected --target-type ios, vnc, or mac".into()),
     }
 }
@@ -64,4 +71,69 @@ fn launch_legacy(args: impl Iterator<Item = OsString>) -> io::Result<i32> {
     }
     #[cfg(not(unix))]
     command.status().map(|status| status.code().unwrap_or(1))
+}
+
+// Only dispatch complete, unambiguous invocations. The original parser is
+// still responsible for mixed options, diagnostics, and alternate forms.
+#[cfg(feature = "xdb")]
+fn discovery_timeout(args: &[OsString]) -> Option<u32> {
+    let value = match args {
+        [flag] if flag == "--list-devices" => return Some(3000),
+        [flag, option, value] if flag == "--list-devices" && option == "--discovery-timeout" => {
+            value.to_str()?
+        }
+        [option, value, flag] if flag == "--list-devices" && option == "--discovery-timeout" => {
+            value.to_str()?
+        }
+        [flag, option] if flag == "--list-devices" => {
+            option.to_str()?.strip_prefix("--discovery-timeout=")?
+        }
+        [option, flag] if flag == "--list-devices" => {
+            option.to_str()?.strip_prefix("--discovery-timeout=")?
+        }
+        _ => return None,
+    };
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok().filter(|value| *value <= 60_000)
+}
+
+#[cfg(feature = "xdb")]
+fn list_devices(timeout: u32) -> i32 {
+    use std::io::Write;
+    let result = scrctl_ios::devices(0, "auto", timeout);
+    let result = match result {
+        Ok(result) => result,
+        Err(scrctl_ios::Error::Server { message, .. } | scrctl_ios::Error::Client(message)) => {
+            eprintln!("{message}");
+            return 1;
+        }
+    };
+    let (Some(devices), Some(warnings)) =
+        (result["devices"].as_array(), result["warnings"].as_array())
+    else {
+        eprintln!("Invalid XDB devices response");
+        return 1;
+    };
+    let mut out = io::stdout().lock();
+    for device in devices {
+        let field = |name| device[name].as_str().unwrap_or("");
+        let Some(candidates) = device["candidates"].as_array() else {
+            eprintln!("Invalid XDB device candidates");
+            return 1;
+        };
+        if writeln!(out, "{}  {}", field("udid"), field("name")).is_err() {
+            return 1;
+        }
+        for candidate in candidates {
+            if writeln!(out, "  {candidate}").is_err() {
+                return 1;
+            }
+        }
+    }
+    for warning in warnings.iter().filter_map(serde_json::Value::as_str) {
+        eprintln!("{warning}");
+    }
+    0
 }

@@ -110,3 +110,11 @@ Android packaging and device acceptance are follow-up integration work.
 Apple iOS/iPadOS currently use the RFB-only feature set. XDB 1.7.0 has no
 validated iOS host build or app embedding target. Neither binding connects
 to an XDB Server on a different host.
+
+With `--features xdb`, the Rust launcher handles standalone `--list-devices`
+and its canonical decimal `--discovery-timeout` form through the XDB C ABI.
+Mixed options and invalid arguments use the legacy parser. The standard
+feature-free launcher also uses the legacy parser. Run
+`python3 core/tests/discovery_parity.py LEGACY RUST_LAUNCHER` with an initialized
+XDB submodule and a loader path to the shared XDB client to compare discovery
+output and exit status without contacting a device.
