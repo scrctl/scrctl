@@ -23,3 +23,11 @@ DYLD_LIBRARY_PATH="$XDB_LIB_DIR" core/target/debug/scrctl-rs --transport wifi
 This development CLI opens a device session and prints the first decoded BGRA
 frame's dimensions. The Rust session also exposes touch and keyboard methods.
 The iOS crate currently has no UniFFI exports.
+
+## CLI compatibility during migration
+
+The workspace's Rust `scrctl` launcher forwards every argument to the existing
+C++ frontend. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
+binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
+Windows). Keep the original frontend's runtime libraries beside it. The
+`scrctl-rs` first-frame probe remains a separate development command.
