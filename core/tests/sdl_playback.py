@@ -96,6 +96,29 @@ with FakeServer() as peer:
 
 
 if os.name == "posix":
+    for extra, active in (([], "video.frame"), (["--no-video-playback"], "media.status")):
+        with FakeServer() as peer:
+            env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+                       SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+            with subprocess.Popen([sys.argv[1], "--no-audio", *extra], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+                try:
+                    deadline = time.monotonic() + 5
+                    while active not in peer.methods():
+                        assert child.poll() is None and time.monotonic() < deadline, peer.calls
+                        time.sleep(0.01)
+                    child.send_signal(signal.SIGINT)
+                    out, err = child.communicate(timeout=10)
+                    assert child.returncode == 0, (out, err)
+                    assert peer.methods()[-1] == "connection.close", peer.calls
+                    assert ("video.start" in peer.methods()) == (not extra), peer.calls
+                finally:
+                    if child.poll() is None:
+                        child.kill()
+    print("PASS unlimited video and background window startup and exit")
+
+
+if os.name == "posix":
     with FakeServer() as peer:
         env = dict(os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
         args = [sys.argv[1], "--no-window", "--no-video", "--no-audio-playback",

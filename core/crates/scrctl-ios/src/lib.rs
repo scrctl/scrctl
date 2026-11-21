@@ -189,6 +189,7 @@ pub struct VideoOptions<'a> {
     pub recording: Option<VideoRecording<'a>>,
     pub max_bitrate: Option<u64>,
     pub max_fps: u16,
+    pub skip_video: bool,
 }
 
 pub struct Session {
@@ -294,7 +295,7 @@ impl Session {
                 video["record_path"] = json!(recording.path);
             }
         }
-        if recording.is_none_or(|recording| recording.video) {
+        if !options.skip_video && recording.is_none_or(|recording| recording.video) {
             session.client.request(c"video.start", video)?;
         }
         Ok(session)

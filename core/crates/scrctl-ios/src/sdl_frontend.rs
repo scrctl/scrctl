@@ -333,19 +333,35 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         options.no_video_playback = true;
         options.no_audio_playback = true;
     }
-    // Keep the background window with active input on the legacy path until
-    // its keyboard and shortcuts are available in the Rust frontend.
-    if options.no_video_playback && !options.no_window && !options.no_control {
+    if matches
+        .value_source("wifi")
+        .is_some_and(|source| source == clap::parser::ValueSource::CommandLine)
+        && (options.wifi.trim().is_empty()
+            || (options.wifi == "auto"
+                && matches.value_source("wifi_port")
+                    == Some(clap::parser::ValueSource::CommandLine)))
+    {
         return None;
     }
     let orientations = Orientations::resolve(&matches);
-    if (options.no_video || options.no_video_playback)
-        && !options.no_window
-        && (options.fullscreen
-            || options.window_borderless
-            || options.window_width != 0
-            || options.window_height != 0)
+    if options.no_audio_playback
+        && options.record.as_deref().is_none_or(|path| {
+            recording_container(path, options.record_format.as_deref()).is_none()
+        })
     {
+        options.no_audio = true;
+    }
+    if options.record.is_none()
+        && (options.no_window || options.no_video_playback)
+        && options.exit_after == 0
+        && !options.hw_decode
+    {
+        if options.max_fps.is_some() || options.video_bit_rate.is_some() {
+            return None;
+        }
+        options.no_video = true;
+    }
+    if (options.no_video && options.exit_after > 0) || (options.audio_dup && options.no_audio) {
         return None;
     }
     if let Some(path) = options.record.as_deref() {
@@ -359,11 +375,6 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         {
             return None;
         }
-    } else if options.no_video
-        || ((options.no_window || options.no_video_playback) && options.exit_after == 0)
-        || (options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")))
-    {
-        return None;
     }
     Some(run(options, orientations))
 }
@@ -646,6 +657,32 @@ impl Default for Input {
 }
 
 impl Input {
+    fn can_paste(&self, window: &sdl3::video::Window) -> bool {
+        window.has_input_focus()
+            && self.keys.is_empty()
+            && self.touch.is_none()
+            && self.fingers.is_empty()
+            && self.buttons.is_empty()
+            && !self.middle_home
+    }
+
+    fn begin_paste(
+        &self,
+        window: &sdl3::video::Window,
+        session: &Session,
+        paste: &mut Option<PendingPaste>,
+    ) {
+        if paste.is_none()
+            && self.can_paste(window)
+            && let Ok(text) = window.subsystem().clipboard().clipboard_text()
+        {
+            match PendingPaste::start(session, text) {
+                Ok(pending) => *paste = Some(pending),
+                Err(error) => eprintln!("Clipboard paste failed: {error}"),
+            }
+        }
+    }
+
     fn release(&mut self, session: &mut Session) {
         if let Some((x, y)) = self.touch.take() {
             let _ = session.touch(x, y, false);
@@ -1015,9 +1052,10 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
             recording,
             max_bitrate: config.video_bit_rate,
             max_fps: config.max_fps.unwrap_or_default(),
+            skip_video: config.no_video,
         },
     )?;
-    let decode_video = recording.is_none_or(|recording| recording.decode_video);
+    let decode_video = !config.no_video && recording.is_none_or(|recording| recording.decode_video);
     let first_frame = if decode_video {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -1034,6 +1072,9 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     if config.no_audio_playback && recording.is_some_and(|recording| recording.audio) {
         session.start_recording_audio(config.audio_dup, config.audio_buffer)?;
         println!("Local audio playback disabled; recording original AAC without PCM decoding");
+    }
+    if config.no_window && config.no_video && config.no_audio && config.record.is_none() {
+        return Ok(session.close()?);
     }
     if config.no_window || config.no_video || config.no_video_playback {
         return run_headless(&sdl, events, session, first_frame, &config);
@@ -1163,19 +1204,8 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                     }
                     if let Some(action) = shortcut(&event, input.shortcut_mods) {
                         if action == Shortcut::Paste {
-                            if !config.no_control
-                                && !paused
-                                && paste.is_none()
-                                && canvas.window().has_input_focus()
-                                && input.keys.is_empty()
-                                && input.touch.is_none()
-                                && input.fingers.is_empty()
-                                && let Ok(text) = video.clipboard().clipboard_text()
-                            {
-                                match PendingPaste::start(&session, text) {
-                                    Ok(pending) => paste = Some(pending),
-                                    Err(error) => eprintln!("Clipboard paste failed: {error}"),
-                                }
+                            if !config.no_control && !paused {
+                                input.begin_paste(canvas.window(), &session, &mut paste);
                             }
                             continue;
                         }
@@ -1260,14 +1290,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                     }
                 }
                 if let Some(pending) = &paste
-                    && pending.poll(
-                        &mut session,
-                        !paused
-                            && canvas.window().has_input_focus()
-                            && input.keys.is_empty()
-                            && input.touch.is_none()
-                            && input.fingers.is_empty(),
-                    )
+                    && pending.poll(&mut session, !paused && input.can_paste(canvas.window()))
                 {
                     paste = None;
                 }
@@ -1371,11 +1394,44 @@ fn run_headless(
     let mut background = if config.no_window {
         None
     } else {
-        let mut canvas = config.window.open(&sdl.video()?, 640, 480)?;
+        let video = sdl.video()?;
+        let mut builder = config.window.builder(
+            &video,
+            if config.window_width == 0 {
+                256
+            } else {
+                config.window_width
+            },
+            if config.window_height == 0 {
+                256
+            } else {
+                config.window_height
+            },
+        );
+        if config.window_borderless {
+            builder.borderless();
+        }
+        let mut window = builder.build()?;
+        if config.fullscreen {
+            window.set_fullscreen(true)?;
+        }
+        let mut canvas = config.window.canvas(window)?;
         canvas.set_draw_color(config.window.background_color);
         canvas.clear();
         canvas.present();
         Some(canvas)
+    };
+    let mut input = Input {
+        shortcut_mods: config.shortcut_mod,
+        ..Input::default()
+    };
+    let mut paste = None;
+    let no_picture = Geometry {
+        area: Rect::new(0, 0, 1, 1),
+        source: Rect::new(0, 0, 1, 1),
+        angle: 0,
+        panel: (1, 1),
+        flip: (false, false),
     };
     let mut playback = match start_playback(sdl, &mut session, config) {
         Ok(playback) => playback,
@@ -1384,7 +1440,7 @@ fn run_headless(
             return Err(error);
         }
     };
-    let result = (|| -> Result<u64, scrctl_ios::Error> {
+    let result = (|| -> Result<u64, Box<dyn Error>> {
         let decode_video = first_frame.is_some();
         let mut count = u64::from(decode_video);
         let mut serial = first_frame.as_ref().map_or(0, |frame| frame.serial);
@@ -1401,26 +1457,98 @@ fn run_headless(
             }
             let mut quit = false;
             for event in events.poll_iter() {
-                match event {
+                if matches!(
+                    event,
                     Event::Quit { .. }
-                    | Event::Window {
-                        win_event: WindowEvent::CloseRequested,
-                        ..
-                    } => quit = true,
-                    Event::Window {
-                        win_event: WindowEvent::Resized(_, _) | WindowEvent::Exposed,
-                        ..
-                    } => {
-                        if let Some(canvas) = &mut background {
-                            canvas.clear();
-                            canvas.present();
+                        | Event::Window {
+                            win_event: WindowEvent::CloseRequested,
+                            ..
                         }
+                ) {
+                    quit = true;
+                    break;
+                }
+                let Some(canvas) = &mut background else {
+                    continue;
+                };
+                if let Some(action) = shortcut(&event, input.shortcut_mods) {
+                    if action == Shortcut::Paste {
+                        if !config.no_control {
+                            input.begin_paste(canvas.window(), &session, &mut paste);
+                        }
+                        continue;
                     }
-                    _ => {}
+                    if let Some(pending) = &paste {
+                        pending.cancel();
+                    }
+                    input.release(&mut session);
+                    match action {
+                        Shortcut::Quit => {
+                            quit = true;
+                            break;
+                        }
+                        Shortcut::RotateDevice if !config.no_control => session.rotate_device()?,
+                        Shortcut::Fullscreen => {
+                            let enter = canvas.window().fullscreen_state()
+                                == sdl3::video::FullscreenType::Off;
+                            canvas.window_mut().set_fullscreen(enter)?;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+                let redraw = matches!(
+                    event,
+                    Event::Window {
+                        win_event: WindowEvent::Resized(_, _)
+                            | WindowEvent::PixelSizeChanged(_, _)
+                            | WindowEvent::Exposed,
+                        ..
+                    }
+                );
+                if redraw {
+                    canvas.clear();
+                    canvas.present();
+                }
+                if (redraw
+                    || matches!(
+                        event,
+                        Event::KeyDown { repeat: false, .. }
+                            | Event::Window {
+                                win_event: WindowEvent::FocusLost,
+                                ..
+                            }
+                    ))
+                    && let Some(pending) = &paste
+                {
+                    pending.cancel();
+                }
+                // Background windows only forward keyboard and consumer keys.
+                if matches!(
+                    event,
+                    Event::KeyDown { .. } | Event::KeyUp { .. } | Event::Window { .. }
+                ) {
+                    input.event(
+                        !config.no_control,
+                        &mut session,
+                        event,
+                        no_picture,
+                        canvas.window().size(),
+                    )?;
                 }
             }
             if quit {
                 break;
+            }
+            if let Some(pending) = &paste
+                && pending.poll(
+                    &mut session,
+                    background
+                        .as_ref()
+                        .is_some_and(|canvas| input.can_paste(canvas.window())),
+                )
+            {
+                paste = None;
             }
             fill_playback(&mut playback, &mut session, config.record.is_some());
             if decode_video {
@@ -1438,6 +1566,8 @@ fn run_headless(
         }
         Ok(count)
     })();
+    drop(paste);
+    input.release(&mut session);
     drop(playback);
     let finish = if config.record.is_some() {
         session.finish_media()
@@ -1448,7 +1578,7 @@ fn run_headless(
     let count = result?;
     finish?;
     close?;
-    if config.no_video {
+    if config.no_video && config.record.is_some() {
         println!("Finished: audio recording finalized");
     } else if count == 0 && config.record.is_some() {
         println!("Finished: encoded video recording finalized");
