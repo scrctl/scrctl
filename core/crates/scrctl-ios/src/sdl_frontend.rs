@@ -59,7 +59,11 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         return None;
     }
     if options.record.as_deref().is_some_and(|path| {
-        path.is_empty() || !options.no_window || !options.no_audio || options.exit_after == 0
+        path.is_empty()
+            || !options.no_window
+            || options.exit_after == 0
+            || !(options.no_audio
+                || recording_container(path, options.record_format.as_deref()).is_some())
     }) {
         return None;
     }
@@ -73,30 +77,16 @@ struct Playback {
 }
 
 impl Playback {
-    fn start(
-        sdl: &sdl3::Sdl,
-        session: &mut Session,
-        config: &Options,
-    ) -> Result<Self, Box<dyn Error>> {
-        let audio = sdl.audio()?;
-        let reader = session.start_audio(config.audio_dup, config.audio_buffer)?;
+    fn open(audio: &sdl3::AudioSubsystem, reader: AudioReader) -> Result<Self, sdl3::Error> {
         let (rate, channels) = reader.format();
         let spec = AudioSpec {
             freq: Some(rate),
             channels: Some(i32::from(channels)),
             format: Some(AudioFormat::s16_sys()),
         };
-        let output = match audio
+        let output = audio
             .default_playback_device()
-            .open_device_stream(Some(&spec))
-        {
-            Ok(output) => output,
-            Err(error) => {
-                drop(reader);
-                let _ = session.stop_audio();
-                return Err(error.into());
-            }
-        };
+            .open_device_stream(Some(&spec))?;
         Ok(Self {
             reader,
             output,
@@ -265,6 +255,17 @@ impl Input {
     }
 }
 
+fn recording_container(path: &str, explicit: Option<&str>) -> Option<&'static str> {
+    match explicit {
+        Some("mp4") => Some("mp4"),
+        Some("mkv") => Some("mkv"),
+        Some(_) => None,
+        None if path.to_ascii_lowercase().ends_with(".mp4") => Some("mp4"),
+        None if path.to_ascii_lowercase().ends_with(".mkv") => Some("mkv"),
+        None => None,
+    }
+}
+
 fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
     let mut events = sdl.event_pump()?;
@@ -277,15 +278,12 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
         .as_ref()
         .map(|path| {
             let path = path.to_str().ok_or("Recording path is not UTF-8")?;
-            let container = match config.record_format.as_deref() {
-                Some("mp4") => Some("mp4"),
-                Some("mkv") => Some("mkv"),
-                Some(_) => None,
-                None if path.to_ascii_lowercase().ends_with(".mp4") => Some("mp4"),
-                None if path.to_ascii_lowercase().ends_with(".mkv") => Some("mkv"),
-                None => None,
-            };
-            Ok::<_, &str>(VideoRecording { path, container })
+            let container = recording_container(path, config.record_format.as_deref());
+            Ok::<_, &str>(VideoRecording {
+                path,
+                container,
+                audio: container.is_some() && !config.no_audio,
+            })
         })
         .transpose()?;
     let mut session = Session::open_video(
@@ -317,6 +315,13 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
             return Err(error);
         }
     };
+    if config.no_audio_playback && recording.is_some_and(|recording| recording.audio) {
+        if let Err(error) = session.start_recording_audio(config.audio_dup, config.audio_buffer) {
+            let _ = session.finish_media();
+            return Err(error.into());
+        }
+        println!("Local audio playback disabled; recording original AAC without PCM decoding");
+    }
     if config.no_window {
         return run_headless(&sdl, events, session, frame, &config);
     }
@@ -331,7 +336,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     let mut texture =
         creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
     let mut texture_size = (frame.width, frame.height);
-    let mut playback = start_playback(&sdl, &mut session, &config);
+    let mut playback = start_playback(&sdl, &mut session, &config)?;
     let mut input = Input::default();
     let mut geometry = Geometry::new(&frame, canvas.window().size());
     let result = (|| -> Result<(), Box<dyn Error>> {
@@ -415,7 +420,7 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                         continue 'running;
                     }
                 }
-                fill_playback(&mut playback, &mut session);
+                fill_playback(&mut playback, &mut session, config.record.is_some());
                 if let Some(next) = session.next_frame(frame.serial, 8)? {
                     frame = next;
                     break;
@@ -433,22 +438,56 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn start_playback(sdl: &sdl3::Sdl, session: &mut Session, config: &Options) -> Option<Playback> {
+fn start_playback(
+    sdl: &sdl3::Sdl,
+    session: &mut Session,
+    config: &Options,
+) -> Result<Option<Playback>, Box<dyn Error>> {
     if config.no_audio || config.no_audio_playback {
-        return None;
+        return Ok(None);
     }
-    Playback::start(sdl, session, config)
-        .map_err(|error| eprintln!("Audio unavailable: {error}"))
-        .ok()
+    let recording = config.record.is_some();
+    let audio = match sdl.audio() {
+        Ok(audio) => audio,
+        Err(error) if recording => return Err(error.into()),
+        Err(error) => {
+            eprintln!("Audio unavailable: {error}");
+            return Ok(None);
+        }
+    };
+    let reader = match session.start_audio(config.audio_dup, config.audio_buffer) {
+        Ok(reader) => reader,
+        Err(error) if recording => return Err(error.into()),
+        Err(error) => {
+            eprintln!("Audio unavailable: {error}");
+            return Ok(None);
+        }
+    };
+    match Playback::open(&audio, reader) {
+        Ok(playback) => Ok(Some(playback)),
+        Err(error) if recording => {
+            eprintln!(
+                "Failed to open audio output: {error} (recording and audio reception continue)"
+            );
+            Ok(None)
+        }
+        Err(error) => {
+            eprintln!("Audio unavailable: {error}");
+            let _ = session.stop_audio();
+            Ok(None)
+        }
+    }
 }
 
-fn fill_playback(playback: &mut Option<Playback>, session: &mut Session) {
+fn fill_playback(playback: &mut Option<Playback>, session: &mut Session, recording: bool) {
     if let Some(audio) = playback
         && let Err(error) = audio.fill()
     {
         eprintln!("Audio unavailable: {error}");
         *playback = None;
-        let _ = session.stop_audio();
+        if !recording {
+            let _ = session.stop_audio();
+        }
     }
 }
 
@@ -459,7 +498,13 @@ fn run_headless(
     first_frame: Frame,
     config: &Options,
 ) -> Result<(), Box<dyn Error>> {
-    let mut playback = start_playback(sdl, &mut session, config);
+    let mut playback = match start_playback(sdl, &mut session, config) {
+        Ok(playback) => playback,
+        Err(error) => {
+            let _ = session.finish_media();
+            return Err(error);
+        }
+    };
     let result = (|| -> Result<u64, scrctl_ios::Error> {
         let mut count = 1;
         let mut serial = first_frame.serial;
@@ -475,7 +520,7 @@ fn run_headless(
             {
                 break;
             }
-            fill_playback(&mut playback, &mut session);
+            fill_playback(&mut playback, &mut session, config.record.is_some());
             if let Some(frame) = session.next_frame(serial, 8)? {
                 serial = frame.serial;
                 count += 1;

@@ -156,6 +156,7 @@ pub struct Frame {
 pub struct VideoRecording<'a> {
     pub path: &'a str,
     pub container: Option<&'a str>,
+    pub audio: bool,
 }
 
 pub struct Session {
@@ -222,7 +223,7 @@ impl Session {
                 session.client.request(
                     c"recording.configure",
                     json!({
-                        "path": recording.path, "format": format, "video": true, "audio": false,
+                        "path": recording.path, "format": format, "video": true, "audio": recording.audio,
                         "orientation": 0, "orientation_from_device": true,
                     }),
                 )?;
@@ -353,6 +354,15 @@ impl Session {
                 Err(Error::Client("Invalid XDB audio format".into()))
             }
         }
+    }
+
+    pub fn start_recording_audio(&mut self, duplicate: bool, buffer_ms: u32) -> Result<(), Error> {
+        self.client
+            .request(
+                c"audio.start",
+                json!({"decode": false, "duplicate": duplicate, "buffer_ms": buffer_ms}),
+            )
+            .map(|_| ())
     }
 
     pub fn stop_audio(&mut self) -> Result<(), Error> {

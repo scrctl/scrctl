@@ -30,6 +30,8 @@ for args, required in (
     (["--wifi", "auto", "--copy", "测试🙂", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--copy", "", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--no-window", "--no-audio", "--exit-after", "3"], ["video.start", "video.frame"]),
+    (["--no-window", "--audio-dup", "--exit-after", "3", "-r", "capture.mp4"], ["recording.configure", "video.start", "audio.start", "media.finish"]),
+    (["--no-window", "--no-audio-playback", "--exit-after", "3", "--record", "capture.mkv"], ["recording.configure", "video.start", "audio.start", "media.finish"]),
     (["--no-window", "--no-audio", "--exit-after", "3", "--record", "capture.MKV"], ["recording.configure", "video.start", "media.finish"]),
     (["--no-window", "--no-audio", "--exit-after", "3", "-r", "capture.mp4", "--record-format", "hevc"], ["video.start", "media.finish"]),
 ):
@@ -39,6 +41,7 @@ for args, required in (
             env = dict(
                 os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent",
                 SDL_VIDEO_DRIVER="nonexistent", SDL_VIDEODRIVER="nonexistent",
+                SDL_AUDIO_DRIVER="dummy", SDL_AUDIODRIVER="dummy",
             )
             result = subprocess.run([command, *args], env=env, capture_output=True, timeout=15)
             assert result.returncode == 0, result
@@ -46,6 +49,12 @@ for args, required in (
             calls = [call for call in peer.calls if call[0] in required]
             if "video.frame" in required:
                 calls = []  # The old video polling cadence differs.
-            observed.append((result.stdout, result.stderr, calls))
+            stdout = result.stdout
+            if "audio.start" in required and "--no-audio-playback" not in args:
+                if command == launcher:
+                    assert "audio.read" in peer.methods(), peer.calls
+                stdout = b"\n".join(line for line in stdout.split(b"\n")
+                                    if not line.startswith(b"Audio output opened:"))
+            observed.append((stdout, result.stderr, calls))
     assert observed[0] == observed[1], (args, observed)
     print("PASS", args)
