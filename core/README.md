@@ -164,7 +164,7 @@ and shutdown release active input.
 Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
 subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
 default to C++ while its shortcuts, multi-touch and window behavior are
-being ported. Recording, file playback, advanced window controls (including fullscreen/crop options),
+being ported. Advanced recording modes, hardware file playback, advanced window controls (including fullscreen/crop options),
 and other unrecognized option combinations also use the legacy frontend.
 
 ```sh
@@ -196,7 +196,26 @@ DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
 Bounded video-only recording (`--no-window --no-audio --exit-after N -r FILE`)
 uses Rust for MP4, MKV and raw HEVC, including explicit `--record-format`.
 XDB still writes the file. The launcher checks `media.finish` before reporting
-success and closes the session even if finalization fails. Other recording
-forms, including audio tracks and custom orientation, still use the C++
-frontend. The loopback test checks RPC parameters and finalization order;
+success and closes the session even if finalization fails.
+The same bounded headless path captures audio in MP4/MKV unless
+`--no-audio` is set. `--no-audio-playback` captures encoded AAC without opening
+SDL audio or requesting PCM. Audio-only, unlimited, windowed and custom
+orientation recording still use the C++ frontend. The loopback test checks RPC parameters and finalization order;
 it does not produce an actual media file.
+
+
+### Local HEVC playback
+
+Build with `--features sdl3,ffmpeg-next` to run software Annex-B HEVC playback
+through Rust and the existing system FFmpeg libraries. The supported options
+are `--play`, `--no-window`, `--title` / `--window-title` and `--exit-after`.
+Hardware decoding and additional playback/geometry options use the C++
+frontend. Run the parity check from the repository root:
+
+```sh
+DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
+  python3 core/tests/file_cli_parity.py /opt/homebrew/bin/scrctl core/target/debug/scrctl
+```
+
+The test creates an Annex-B sample with FFmpeg's executable and libx265.
+Normal Rust playback links the FFmpeg libraries directly.

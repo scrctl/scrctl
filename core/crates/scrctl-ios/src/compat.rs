@@ -2,6 +2,8 @@
 mod desktop;
 #[cfg(feature = "xdb")]
 mod device_cli;
+#[cfg(all(feature = "sdl3", feature = "ffmpeg-next"))]
+mod file_cli;
 #[cfg(feature = "sdl3")]
 mod sdl_frontend;
 
@@ -44,6 +46,10 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             }
             #[cfg(feature = "xdb")]
             if let Some(status) = device_cli::run_if_supported(&args) {
+                return Ok(status);
+            }
+            #[cfg(all(feature = "sdl3", feature = "ffmpeg-next"))]
+            if let Some(status) = file_cli::run_if_supported(&args) {
                 return Ok(status);
             }
             #[cfg(feature = "sdl3")]

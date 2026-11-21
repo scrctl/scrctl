@@ -9,6 +9,7 @@ repository.workspace = true
 [features]
 xdb = ["dep:serde_json"]
 sdl3 = ["xdb", "dep:sdl3"]
+ffmpeg-next = ["dep:ffmpeg-next"]
 
 [dependencies]
 serde_json = { version = "1", optional = true }
@@ -16,6 +17,7 @@ clap = { version = "4", default-features = false, features = ["derive", "std", "
 rfb-engine = { path = "../rfb-engine" }
 tokio = { version = "1", features = ["rt", "time"] }
 sdl3 = { version = "=0.22.1", features = ["use-pkg-config"], optional = true }
+ffmpeg-next = { version = "=9.1.0", default-features = false, features = ["format", "software-scaling"], optional = true }
 
 [[bin]]
 name = "scrctl-rs"
