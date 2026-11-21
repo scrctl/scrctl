@@ -1,9 +1,3 @@
-# Optional candidate for the Rust migration. The installed legacy executable
-# remains available for CLI combinations that still use the C++ parser.
-set(SCRCTL_RUST_FRONTEND "" CACHE FILEPATH "Prebuilt native Rust scrctl executable for local package validation")
-if(SCRCTL_RUST_FRONTEND AND NOT EXISTS "${SCRCTL_RUST_FRONTEND}")
-    message(FATAL_ERROR "SCRCTL_RUST_FRONTEND does not exist: ${SCRCTL_RUST_FRONTEND}")
-endif()
 if(SCRCTL_RUST_FRONTEND)
     install(CODE "set(scrctl_has_rust_frontend ON)")
 else()

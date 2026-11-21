@@ -245,3 +245,13 @@ cmake -B build-candidate -DSCRCTL_RUST_FRONTEND="$PWD/core/target/release/scrctl
 cmake --install build-candidate --prefix "$PWD/dist-candidate"
 python3 tools/test_macos_install.py dist-candidate build-candidate
 ```
+
+On Linux, link the candidate with `-C 'link-arg=-Wl,-rpath,$ORIGIN/lib'`
+and use the same `SCRCTL_RUST_FRONTEND` option. The installed client uses
+the bundled XDB client under `bin/lib`. Provide compatible SDL3 and FFmpeg
+shared libraries through the system package manager. On Windows, build
+`scrctl.exe` for the same architecture as the C++ and XDB client builds.
+Configure with `SCRCTL_RUST_FRONTEND` pointing to that executable and include
+the native dependency directories in `SCRCTL_RUNTIME_DLL_DIRS`. CMake
+scans and packages the imports of both executables. These platform paths
+require separate native package validation.
