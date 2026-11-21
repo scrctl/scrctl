@@ -1,0 +1,23 @@
+[package]
+name = "xdb-ffi"
+description = "Standalone UniFFI bindings for scrctl iOS device sessions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[features]
+xdb = ["dep:scrctl-ios", "dep:thiserror", "dep:uniffi"]
+
+[dependencies]
+scrctl-ios = { path = "../scrctl-ios", features = ["xdb"], optional = true }
+thiserror = { version = "2", optional = true }
+uniffi = { version = "0.32", optional = true }
+
+[lints.rust]
+unsafe_code = "forbid"

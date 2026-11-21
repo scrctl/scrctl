@@ -110,3 +110,21 @@ Android packaging and device acceptance are follow-up integration work.
 Apple iOS/iPadOS currently use the RFB-only feature set. XDB 1.7.0 has no
 validated iOS host build or app embedding target. Neither binding connects
 to an XDB Server on a different host.
+
+### Standalone XDB module
+
+Apps that already consume the default RFB bindings can build XDB separately
+and keep it out of their iOS/iPadOS targets. On macOS, from `core/`:
+
+```sh
+XDB_LIB_DIR=/opt/homebrew/opt/xdb/lib cargo build -p xdb-ffi --features xdb --locked
+cargo run -p rfb-ffi-bindgen --locked -- generate --library target/debug/libxdb_ffi.dylib \
+  --language swift --language kotlin --out-dir target/xdb-bindings --no-format
+```
+
+This generates `xdb_ffi.swift` and `xdb_ffiFFI`, and Kotlin package
+`uniffi.xdb_ffi`. Put the Swift bindings in a separate target from the RFB
+bindings. Link the macOS target to `libxdb_ffi.dylib` and make the matching
+shared XDB client available to the loader. The API matches the combined
+module's optional XDB interface. Build the regular RFB module without its
+`xdb` feature when using the standalone module.
