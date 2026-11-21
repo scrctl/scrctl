@@ -9,8 +9,23 @@ fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
 sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
+class ManagementPeer(FakeServer):
+    def handle_call(self, name, params):
+        result, data = super().handle_call(name, params)
+        if name == "pair":
+            return {"udid": "mock-iphone"}, b""
+        if name == "ddi.download":
+            return {"cached": True, "path": "/fixture/DDI"}, b""
+        return result, data
+
+
 legacy, launcher = sys.argv[1:]
 for args, required in (
+    (["--pair", "--wifi", "auto", "--pairing-timeout", "100"], ["pair"]),
+    (["--pair", "--repair-pairing", "-s", "mock-iphone"], ["pair"]),
+    (["--download-ddi", "--ddi-system-version", "26.0", "--ddi-product-type", "TestPhone"], ["ddi.download"]),
+    (["--download-ddi", "-s", "mock-iphone"], ["connection.open", "device.info", "connection.close", "ddi.download"]),
+    (["--install-ddi", "--replace-ddi", "--ddi-install-timeout", "55"], ["devices", "ddi.prepare"]),
     (["--list-apps"], ["app.list"]),
     (["--wifi", "auto", "--copy", "测试🙂", "--paste"], ["clipboard.set", "clipboard.get"]),
     (["--copy", "", "--paste"], ["clipboard.set", "clipboard.get"]),
@@ -18,7 +33,7 @@ for args, required in (
 ):
     observed = []
     for command in (legacy, launcher):
-        with FakeServer() as peer:
+        with ManagementPeer() as peer:
             env = dict(
                 os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent",
                 SDL_VIDEO_DRIVER="nonexistent", SDL_VIDEODRIVER="nonexistent",
@@ -26,6 +41,9 @@ for args, required in (
             result = subprocess.run([command, *args], env=env, capture_output=True, timeout=15)
             assert result.returncode == 0, result
             assert all(method in peer.methods() for method in required), peer.calls
-            observed.append((result.stdout, result.stderr))
+            calls = [call for call in peer.calls if call[0] in required]
+            if "video.start" in required:
+                calls = []  # The old video polling cadence differs.
+            observed.append((result.stdout, result.stderr, calls))
     assert observed[0] == observed[1], (args, observed)
     print("PASS", args)

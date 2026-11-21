@@ -164,7 +164,7 @@ and shutdown release active input.
 Set `SCRCTL_RUST_SDL=1` to try an unlimited interactive session with this
 subset; `SCRCTL_RUST_SDL=0` selects the legacy mirror. Unlimited sessions
 default to C++ while its shortcuts, multi-touch and window behavior are
-being ported. Recording, file playback, pairing, advanced window controls (including fullscreen/crop options),
+being ported. Recording, file playback, advanced window controls (including fullscreen/crop options),
 and other unrecognized option combinations also use the legacy frontend.
 
 ```sh
@@ -178,11 +178,13 @@ The fixture uses SDL dummy video/audio by default. On macOS set
 with silent test PCM.
 
 
-### App list, clipboard and headless regression
+### Device commands and headless regression
 
 With XDB enabled, the launcher handles standalone `--list-apps`, `--copy`
 (including an empty value) and `--paste`, with optional device selection.
-Combinations outside that parser, including `--lang`, use the incumbent
+The same route handles `--pair`, `--download-ddi`, and `--install-ddi`
+with their standalone options. Management RPC events print pairing codes and
+status messages on stderr. Combinations outside that parser, including `--lang`, use the incumbent
 frontend. For `--no-window` with a positive `--exit-after`, Rust counts real
 decoded frames and can play audio without initializing SDL video.
 

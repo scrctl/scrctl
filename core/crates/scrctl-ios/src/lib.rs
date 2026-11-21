@@ -55,7 +55,7 @@ fn last_error() -> Error {
 }
 
 struct Client(NonNull<c_void>);
-// A client owns its socket and has no event callback or thread-affine state.
+// A client owns its socket and callbacks use no user data or thread-affine state.
 // Exclusive Rust access serializes all SDK calls, including destruction.
 unsafe impl Send for Client {}
 
@@ -75,7 +75,14 @@ impl Drop for Response {
 
 impl Client {
     fn connect(port: u16) -> Result<Self, Error> {
-        NonNull::new(unsafe { xdb_client_connect(port, None, ptr::null_mut()) })
+        Self::connect_with_events(port, None)
+    }
+
+    fn connect_with_events(
+        port: u16,
+        event: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
+    ) -> Result<Self, Error> {
+        NonNull::new(unsafe { xdb_client_connect(port, event, ptr::null_mut()) })
             .map(Self)
             .ok_or_else(last_error)
     }
@@ -369,5 +376,120 @@ pub fn device_commands(
             .ok_or_else(|| Error::Client("Invalid XDB clipboard response".into()))?;
         println!("{text}");
     }
+    Ok(())
+}
+
+unsafe extern "C" fn print_management_event(text: *const c_char, _: *mut c_void) {
+    use std::io::Write;
+
+    if text.is_null() {
+        return;
+    }
+    // XDB borrows the event JSON only for the duration of this callback.
+    let Ok(event) = serde_json::from_slice::<Value>(unsafe { CStr::from_ptr(text) }.to_bytes())
+    else {
+        return;
+    };
+    let mut stderr = std::io::stderr().lock();
+    if event["event"] == "pin" {
+        let _ = writeln!(
+            stderr,
+            "Pairing code: {}",
+            event["data"]["pin"].as_str().unwrap_or("")
+        );
+    } else if let Some(message) = event["data"]["message"].as_str() {
+        let _ = writeln!(stderr, "{message}");
+    }
+}
+
+pub fn pair_device(udid: &str, wifi: bool, repair: bool, timeout_ms: u32) -> Result<String, Error> {
+    let mut client = Client::connect_with_events(0, Some(print_management_event))?;
+    let (value, _) = client.request(
+        c"pair",
+        json!({
+            "udid": udid, "transport": if wifi { "wifi" } else { "usb" },
+            "repair": repair, "timeout_ms": timeout_ms,
+        }),
+    )?;
+    Ok(string_field(&value, "udid")?.into())
+}
+
+fn string_field<'a>(value: &'a Value, field: &str) -> Result<&'a str, Error> {
+    value[field]
+        .as_str()
+        .ok_or_else(|| Error::Client(format!("Missing XDB response field {field}")))
+}
+
+pub struct DdiOptions<'a> {
+    pub udid: &'a str,
+    pub wifi: &'a str,
+    pub wifi_port: u16,
+    pub directory: &'a str,
+    pub download_timeout: u32,
+}
+
+pub fn download_ddi(
+    options: DdiOptions<'_>,
+    version: Option<&str>,
+    model: &str,
+) -> Result<Value, Error> {
+    let mut client = Client::connect_with_events(0, Some(print_management_event))?;
+    let info;
+    let (version, model) = if let Some(version) = version {
+        (version, model)
+    } else {
+        client.request(
+            c"connection.open",
+            json!({
+                "udid": options.udid, "wifi": options.wifi, "port": options.wifi_port,
+            }),
+        )?;
+        (info, _) = client.request(c"device.info", json!({}))?;
+        client.request(c"connection.close", json!({}))?;
+        (
+            string_field(&info, "os_version")?,
+            string_field(&info, "product_type")?,
+        )
+    };
+    let (value, _) = client.request(
+        c"ddi.download",
+        json!({
+            "os_version": version, "product_type": model, "cache_directory": options.directory,
+            "timeout_seconds": options.download_timeout,
+        }),
+    )?;
+    Ok(value)
+}
+
+pub fn install_ddi(
+    options: DdiOptions<'_>,
+    replace: bool,
+    install_timeout: u32,
+) -> Result<(), Error> {
+    let mut client = Client::connect_with_events(0, Some(print_management_event))?;
+    let discovered;
+    let udid = if options.udid.is_empty() {
+        (discovered, _) = client.request(c"devices", json!({
+            "transport": if options.wifi.is_empty() { "auto" } else { "wifi" }, "timeout_ms": 3000,
+        }))?;
+        let Some([device]) = discovered["devices"].as_array().map(Vec::as_slice) else {
+            return Err(Error::Client(
+                "Select one identified device with -s before preparing DDI".into(),
+            ));
+        };
+        string_field(device, "udid")
+            .ok()
+            .filter(|udid| !udid.is_empty())
+            .ok_or_else(|| {
+                Error::Client("Select one identified device with -s before preparing DDI".into())
+            })?
+    } else {
+        options.udid
+    };
+    client.request(c"ddi.prepare", json!({
+        "udid": udid, "wifi": options.wifi, "port": options.wifi_port,
+        "cache_directory": options.directory, "replace": replace,
+        "download_timeout_seconds": options.download_timeout, "install_timeout_seconds": install_timeout,
+    }))?;
     Ok(())
 }
