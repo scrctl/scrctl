@@ -46,7 +46,7 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             if let Some(timeout) = discovery_timeout(&args) {
                 return Ok(list_devices(timeout));
             }
-            #[cfg(feature = "xdb")]
+            #[cfg(all(feature = "xdb", not(feature = "sdl3")))]
             if let Some(status) = device_cli::run_if_supported(&args) {
                 return Ok(status);
             }
@@ -56,7 +56,7 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             }
             #[cfg(feature = "sdl3")]
             if let Some(result) = sdl_frontend::run_if_supported(&args) {
-                return result.map(|()| 0);
+                return result;
             }
             launch_legacy(args.into_iter())
                 .map_err(|error| format!("could not launch the C++ frontend: {error}").into())

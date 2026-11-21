@@ -1,18 +1,27 @@
+#[cfg(not(feature = "sdl3"))]
 use clap::Parser;
+#[cfg(not(feature = "sdl3"))]
 use std::ffi::OsString;
 use xdb_engine::{DdiOptions, Error};
 
-#[derive(Parser)]
-#[command(disable_help_flag = true)]
-struct Options {
+#[derive(clap::Args)]
+pub(crate) struct Target {
     #[arg(short = 's', long, default_value = "")]
-    serial: String,
+    pub(crate) serial: String,
     #[arg(long, default_value = "")]
-    wifi: String,
+    pub(crate) wifi: String,
     #[arg(long, default_value_t = 49152, value_parser = clap::value_parser!(u16).range(1..), requires = "wifi")]
-    wifi_port: u16,
+    pub(crate) wifi_port: u16,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct Commands {
     #[arg(long)]
     list_apps: bool,
+    #[arg(long, conflicts_with = "pair")]
+    list_devices: bool,
+    #[arg(long, requires = "list_devices", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(..=60000))]
+    discovery_timeout: u32,
     #[arg(long)]
     copy: Option<String>,
     #[arg(long)]
@@ -41,77 +50,120 @@ struct Options {
     ddi_download_timeout: Option<u32>,
 }
 
+#[cfg(not(feature = "sdl3"))]
+#[derive(Parser)]
+#[command(disable_help_flag = true)]
+struct Options {
+    #[command(flatten)]
+    target: Target,
+    #[command(flatten)]
+    commands: Commands,
+}
+
+#[cfg(not(feature = "sdl3"))]
 pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
     let options = Options::try_parse_from(
         std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
     )
     .ok()?;
-    let ddi = options.download_ddi || options.install_ddi;
-    if !ddi && (options.ddi_directory.is_some() || options.ddi_download_timeout.is_some()) {
-        return None;
-    }
-    if options.pair
-        && !options.wifi.is_empty()
-        && (options.wifi != "auto" || options.repair_pairing)
-    {
-        return None;
-    }
-    if ddi
-        && (options
-            .ddi_system_version
-            .as_deref()
-            .is_some_and(|version| {
-                let parts: Vec<_> = version.split('.').collect();
-                parts.len() > 3
-                    || parts
-                        .iter()
-                        .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
-            })
-            || options
-                .ddi_product_type
-                .as_deref()
-                .is_some_and(|name| name.trim().is_empty())
-            || options
-                .ddi_directory
-                .as_deref()
-                .is_some_and(|path| path.trim().is_empty()))
-    {
-        return None;
-    }
-
-    let result = if options.pair {
-        xdb_engine::pair_device(
-            &options.serial,
-            !options.wifi.is_empty(),
-            options.repair_pairing,
-            options.pairing_timeout,
-        )
-        .map(|udid| println!("Pairing saved by xdb: {udid}"))
-    } else if ddi {
-        run_ddi(&options)
-    } else if options.list_apps || options.copy.is_some() || options.paste {
-        xdb_engine::device_commands(
-            0,
-            &options.serial,
-            &options.wifi,
-            options.wifi_port,
-            options.list_apps,
-            options.copy.as_deref(),
-            options.paste,
-        )
-    } else {
-        return None;
-    };
-    Some(match result {
-        Ok(()) => 0,
-        Err(Error::Client(message) | Error::Server { message, .. }) => {
-            eprintln!("{message}");
-            1
-        }
-    })
+    options
+        .commands
+        .validate(&options.target, !options.target.serial.is_empty())?;
+    options.commands.run(&options.target)
 }
 
-fn run_ddi(options: &Options) -> Result<(), Error> {
+impl Commands {
+    pub(crate) fn is_ddi(&self) -> bool {
+        self.download_ddi || self.install_ddi
+    }
+
+    #[cfg(feature = "sdl3")]
+    pub(crate) fn is_requested(&self) -> bool {
+        self.pair
+            || self.is_ddi()
+            || self.list_devices
+            || self.list_apps
+            || self.copy.is_some()
+            || self.paste
+    }
+
+    #[cfg(feature = "sdl3")]
+    pub(crate) fn pair_requested(&self) -> bool {
+        self.pair
+    }
+
+    pub(crate) fn validate(&self, target: &Target, serial_explicit: bool) -> Option<()> {
+        let ddi = self.download_ddi || self.install_ddi;
+        if !ddi && (self.ddi_directory.is_some() || self.ddi_download_timeout.is_some()) {
+            return None;
+        }
+        if self.pair && !target.wifi.is_empty() && (target.wifi != "auto" || self.repair_pairing) {
+            return None;
+        }
+        if ddi
+            && ((self.ddi_system_version.is_none()
+                && target.serial.trim().is_empty()
+                && serial_explicit)
+                || self.ddi_system_version.as_deref().is_some_and(|version| {
+                    let parts: Vec<_> = version.split('.').collect();
+                    parts.len() > 3
+                        || parts
+                            .iter()
+                            .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+                })
+                || self
+                    .ddi_product_type
+                    .as_deref()
+                    .is_some_and(|name| name.trim().is_empty())
+                || self
+                    .ddi_directory
+                    .as_deref()
+                    .is_some_and(|path| path.trim().is_empty()))
+        {
+            return None;
+        }
+
+        Some(())
+    }
+
+    pub(crate) fn run(&self, target: &Target) -> Option<i32> {
+        if self.list_devices {
+            return Some(crate::list_devices(self.discovery_timeout));
+        }
+        let result = if self.pair {
+            xdb_engine::pair_device(
+                &target.serial,
+                !target.wifi.is_empty(),
+                self.repair_pairing,
+                self.pairing_timeout,
+            )
+            .map(|udid| println!("Pairing saved by xdb: {udid}"))
+        } else if self.is_ddi() {
+            run_ddi(self, target)
+        } else if self.list_apps || self.copy.is_some() || self.paste {
+            xdb_engine::device_commands(
+                0,
+                &target.serial,
+                &target.wifi,
+                target.wifi_port,
+                self.list_apps,
+                self.copy.as_deref(),
+                self.paste,
+            )
+        } else {
+            return None;
+        };
+        Some(match result {
+            Ok(()) => 0,
+            Err(Error::Client(message) | Error::Server { message, .. }) => {
+                eprintln!("{message}");
+                1
+            }
+        })
+    }
+}
+
+fn run_ddi(options: &Commands, target: &Target) -> Result<(), Error> {
     let absolute;
     let directory = match &options.ddi_directory {
         Some(path) => {
@@ -123,9 +175,9 @@ fn run_ddi(options: &Options) -> Result<(), Error> {
         None => "",
     };
     let ddi = DdiOptions {
-        udid: &options.serial,
-        wifi: &options.wifi,
-        wifi_port: options.wifi_port,
+        udid: &target.serial,
+        wifi: &target.wifi,
+        wifi_port: target.wifi_port,
         directory,
         download_timeout: options.ddi_download_timeout.unwrap_or(300),
     };

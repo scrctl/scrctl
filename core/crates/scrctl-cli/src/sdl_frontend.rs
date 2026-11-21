@@ -17,12 +17,14 @@ use xdb_engine::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 
 #[derive(Parser)]
 struct Options {
-    #[arg(short = 's', long, default_value = "")]
-    serial: String,
-    #[arg(long, default_value = "")]
-    wifi: String,
-    #[arg(long, requires = "wifi", default_value_t = 49152, value_parser = clap::value_parser!(u16).range(1..))]
-    wifi_port: u16,
+    #[command(flatten)]
+    target: crate::device_cli::Target,
+    #[command(flatten)]
+    commands: crate::device_cli::Commands,
+    #[arg(long, value_parser = ["auto", "en", "zh-CN"])]
+    lang: Option<String>,
+    #[arg(long, help = "Show version")]
+    version: bool,
     #[arg(long)]
     no_audio: bool,
     #[arg(long)]
@@ -452,7 +454,7 @@ fn modifier_key(scan: Scancode) -> Mod {
     }
 }
 
-pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>> {
+pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>> {
     let mode = std::env::var_os("SCRCTL_RUST_SDL");
     if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
         return None;
@@ -461,21 +463,75 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
         .ok()?;
     let mut options = Options::from_arg_matches(&matches).ok()?;
-    if !options.test_touch.is_empty() && options.test_touch.len() != 4 {
+    let explicit = |id| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine);
+    let chinese = match options.lang.as_deref() {
+        Some("en") => false,
+        Some("zh-CN") => true,
+        _ => ["LC_ALL", "LC_MESSAGES", "LANG"]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .find(|locale| !locale.is_empty())
+            .is_some_and(|locale| {
+                locale
+                    .split(['_', '.', '@', '-'])
+                    .next()
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("zh"))
+            }),
+    };
+    if chinese && !options.version {
+        // Keep translated output on the existing path until the catalog is ported.
         return None;
     }
+    let invalid = |message: &str| {
+        if chinese {
+            return None;
+        }
+        eprintln!("{message}");
+        Some(Ok(2))
+    };
+    if !options.test_touch.is_empty() && options.test_touch.len() != 4 {
+        return invalid(&format!(
+            "--test-touch: At least 4 required but received {}",
+            options.test_touch.len()
+        ));
+    }
+    if explicit("wifi") && options.target.wifi.trim().is_empty() {
+        return invalid("--wifi: Requires a nonempty LAN address or auto");
+    }
+    if options.target.wifi == "auto" && explicit("wifi_port") {
+        return invalid("--wifi-port: Use a manual LAN address; auto uses discovered SRV ports");
+    }
+    options
+        .commands
+        .validate(&options.target, explicit("serial"))?;
     if options.no_playback {
         options.no_video_playback = true;
         options.no_audio_playback = true;
     }
-    if matches
-        .value_source("wifi")
-        .is_some_and(|source| source == clap::parser::ValueSource::CommandLine)
-        && (options.wifi.trim().is_empty()
-            || (options.wifi == "auto"
-                && matches.value_source("wifi_port")
-                    == Some(clap::parser::ValueSource::CommandLine)))
-    {
+    if options.commands.is_ddi() {
+        const DDI_OPTIONS: &[&str] = &[
+            "download_ddi",
+            "install_ddi",
+            "replace_ddi",
+            "ddi_install_timeout",
+            "ddi_system_version",
+            "ddi_product_type",
+            "ddi_directory",
+            "ddi_download_timeout",
+            "serial",
+            "wifi",
+            "wifi_port",
+            "lang",
+        ];
+        if Options::command().get_arguments().any(|arg| {
+            let id = arg.get_id().as_str();
+            explicit(id) && !DDI_OPTIONS.contains(&id)
+        }) {
+            return None;
+        }
+        return options.commands.run(&options.target).map(Ok);
+    }
+    if options.commands.pair_requested() && options.start_app.is_some() {
         return None;
     }
     let orientations = Orientations::resolve(&matches);
@@ -538,6 +594,11 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
     if let Some(path) = options.record.as_deref() {
         let container = recording_container(path, options.record_format.as_deref()).is_some();
         let rotation = orientations.record.angle.unwrap_or_default();
+        if orientations.record.flip && !options.no_video {
+            return invalid(
+                "--record-orientation: Recording does not support flipping; use --display-orientation for display-only flipping or reset --record-orientation to a rotation",
+            );
+        }
         if path.is_empty()
             || (options.no_video && (!container || options.no_audio || options.exit_after != 0))
             || orientations.record.flip
@@ -547,7 +608,14 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
             return None;
         }
     }
-    Some(run(options, orientations))
+    if options.version {
+        println!("scrctl {}", env!("SCRCTL_PUBLIC_VERSION"));
+        return Some(Ok(0));
+    }
+    if options.commands.is_requested() {
+        return options.commands.run(&options.target).map(Ok);
+    }
+    Some(run(options, orientations).map(|()| 0))
 }
 
 struct Playback {
@@ -1278,10 +1346,10 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
         .transpose()?;
     let mut session = Session::open_video(
         0,
-        &config.serial,
+        &config.target.serial,
         "auto",
-        &config.wifi,
-        config.wifi_port,
+        &config.target.wifi,
+        config.target.wifi_port,
         VideoOptions {
             hardware_decode: !config.no_hw_decode,
             recording,

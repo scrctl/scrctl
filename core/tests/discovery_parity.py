@@ -10,11 +10,14 @@ sys.path.insert(0, str(fixture / "tests" / "support"))
 from fake_server import FakeServer
 
 legacy, launcher = sys.argv[1:]
-for args, timeout in (
+cases = [
     (["--list-devices"], 3000),
     (["--list-devices", "--discovery-timeout", "0"], 0),
     (["--discovery-timeout=12", "--list-devices"], 12),
-):
+]
+if os.getenv("SCRCTL_TEST_NATIVE_OPTIONS") == "1":
+    cases.append((["--lang", "en", "--list-devices", "--discovery-timeout", "0", "--no-audio"], 0))
+for args, timeout in cases:
     with FakeServer() as peer:
         env = dict(os.environ, **peer.environment)
         old = subprocess.run([legacy, *args], capture_output=True, env=env, timeout=15)
