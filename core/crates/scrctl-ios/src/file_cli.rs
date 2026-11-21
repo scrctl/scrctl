@@ -20,8 +20,10 @@ struct Options {
     play: PathBuf,
     #[arg(long)]
     no_window: bool,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "no_hw_decode")]
     hw_decode: bool,
+    #[arg(long)]
+    no_hw_decode: bool,
     #[command(flatten)]
     window: crate::sdl_frontend::WindowOptions,
     #[arg(long, default_value_t = 0)]

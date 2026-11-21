@@ -28,7 +28,7 @@ for server_class in (VideoLimitsServer, FakeServer):
              "--max-fps", "30", "--window-x", "-10", "--window-y", "auto",
              "--always-on-top", "--disable-screensaver", "--render-driver", "software",
              "--background-color", "#123", "--display-orientation", "flip90",
-             "--crop", "2x2+0+0", "--scale", "2"],
+             "--crop", "2x2+0+0", "--scale", "2", "--hw-decode", "--video-source", "stream"],
             env=env, capture_output=True, text=True, timeout=15,
         )
         if server_class is VideoLimitsServer:

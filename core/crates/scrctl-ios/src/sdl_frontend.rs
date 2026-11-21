@@ -34,8 +34,12 @@ struct Options {
     no_control: bool,
     #[arg(long, default_value = "lalt,lsuper", value_parser = parse_shortcut_mod)]
     shortcut_mod: Mod,
+    #[arg(long, conflicts_with_all = ["no_hw_decode", "no_video"])]
+    hw_decode: bool,
     #[arg(long)]
     no_hw_decode: bool,
+    #[arg(long, value_parser = ["display", "stream"])]
+    video_source: Option<String>,
     #[arg(short = 'b', long, value_parser = parse_bit_rate, conflicts_with = "no_video")]
     video_bit_rate: Option<u64>,
     #[arg(long, value_parser = clap::value_parser!(u16).range(..=240), conflicts_with = "no_video")]
@@ -978,7 +982,8 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 container,
                 audio: container.is_some() && !config.no_audio,
                 video: !config.no_video,
-                decode_video: !config.no_video && (!config.no_window || config.exit_after > 0),
+                decode_video: !config.no_video
+                    && (!config.no_window || config.exit_after > 0 || config.hw_decode),
                 orientation: orientations.record.angle.map(|angle| angle as u16),
             })
         })
