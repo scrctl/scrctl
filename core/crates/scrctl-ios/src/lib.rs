@@ -10,6 +10,7 @@ unsafe extern "C" {
         event: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
         userdata: *mut c_void,
     ) -> *mut c_void;
+    fn xdb_client_server_version(client: *const c_void) -> *const c_char;
     fn xdb_client_destroy(client: *mut c_void);
     fn xdb_client_request(
         client: *mut c_void,
@@ -85,6 +86,26 @@ impl Client {
         NonNull::new(unsafe { xdb_client_connect(port, event, ptr::null_mut()) })
             .map(Self)
             .ok_or_else(last_error)
+    }
+
+    fn supports_multi_touch(&self) -> bool {
+        // The version is borrowed from the live client.
+        let version = unsafe { xdb_client_server_version(self.0.as_ptr()) };
+        if version.is_null() {
+            return false;
+        }
+        let Ok(version) = unsafe { CStr::from_ptr(version) }.to_str() else {
+            return false;
+        };
+        let mut parts = version.split('.');
+        let mut numbers = [0u32; 3];
+        for n in &mut numbers {
+            let Some(value) = parts.next().and_then(|p| p.parse().ok()) else {
+                return false;
+            };
+            *n = value;
+        }
+        parts.next().is_none() && numbers >= [1, 4, 0]
     }
 
     fn request(&mut self, method: &CStr, params: Value) -> Result<(Value, Vec<u8>), Error> {
@@ -286,9 +307,42 @@ impl Session {
         Err(Error::Client("Invalid XDB BGRA frame".into()))
     }
 
+    pub fn supports_multi_touch(&self) -> bool {
+        self.client.supports_multi_touch()
+    }
+
     pub fn touch(&mut self, x: f64, y: f64, down: bool) -> Result<(), Error> {
         self.client
             .request(c"input.touch", json!({"x": x, "y": y, "down": down}))
+            .map(|_| ())
+    }
+
+    pub fn touch_contact(&mut self, contact: u8, x: f64, y: f64, down: bool) -> Result<(), Error> {
+        let multi_touch = self.supports_multi_touch();
+        if contact >= 5 || (!multi_touch && contact != 0) {
+            return Err(Error::Client(
+                "Multi-touch requires XDB Server 1.4.0 or later".into(),
+            ));
+        }
+        let mut params = json!({"x": x, "y": y, "down": down});
+        if multi_touch {
+            params["contact"] = json!(contact);
+        }
+        self.client.request(c"input.touch", params).map(|_| ())
+    }
+
+    pub fn button(&mut self, usage: u16, down: bool) -> Result<(), Error> {
+        self.client
+            .request(
+                c"input.button",
+                json!({"page": 12, "usage": usage, "down": down}),
+            )
+            .map(|_| ())
+    }
+
+    pub fn rotate_device(&mut self) -> Result<(), Error> {
+        self.client
+            .request(c"display.rotate", json!({}))
             .map(|_| ())
     }
 

@@ -82,5 +82,15 @@ if len(sys.argv) > 2:
             ("input.keyboard", {"usages": [4]}),
             ("input.touch", {"x": 0.5, "y": 0.75, "down": False}),
             ("input.keyboard", {"usages": []}),
-        ] + [("connection.close", {})], peer.calls
+        ] + [
+            ("input.button", {"page": 12, "usage": 233, "down": True}),
+            ("input.button", {"page": 12, "usage": 233, "down": True}),
+            ("input.button", {"page": 12, "usage": 233, "down": False}),
+            ("input.button", {"page": 12, "usage": 233, "down": True}),
+            ("input.touch", {"contact": 1, "x": 0.75, "y": 0.25, "down": True}),
+            ("input.touch", {"contact": 1, "x": 0.75, "y": 0.25, "down": False}),
+            ("input.button", {"page": 12, "usage": 233, "down": False}),
+            ("display.rotate", {}),
+            ("connection.close", {}),
+        ], peer.calls
         print("PASS SDL input and focus loss")

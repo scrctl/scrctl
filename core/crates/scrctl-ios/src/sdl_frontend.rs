@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
@@ -32,12 +32,22 @@ struct Options {
     audio_buffer: u32,
     #[arg(short = 'n', long)]
     no_control: bool,
+    #[arg(long, default_value = "lalt,lsuper", value_parser = parse_shortcut_mod)]
+    shortcut_mod: Mod,
     #[arg(long)]
     no_hw_decode: bool,
     #[arg(long, visible_alias = "title", default_value = "scrctl")]
     window_title: String,
     #[arg(long)]
     no_window: bool,
+    #[arg(short = 'f', long)]
+    fullscreen: bool,
+    #[arg(long)]
+    window_borderless: bool,
+    #[arg(long, default_value_t = 0)]
+    window_width: u32,
+    #[arg(long, default_value_t = 0)]
+    window_height: u32,
     #[arg(short = 'r', long)]
     record: Option<String>,
     #[arg(long, requires = "record", value_parser = ["mp4", "mkv", "hevc"])]
@@ -52,6 +62,33 @@ struct Options {
     exit_after: u64,
 }
 
+fn parse_shortcut_mod(text: &str) -> Result<Mod, &'static str> {
+    text.split(',').try_fold(Mod::NOMOD, |set, name| {
+        Ok(set
+            | match name {
+                "lctrl" => Mod::LCTRLMOD,
+                "rctrl" => Mod::RCTRLMOD,
+                "lalt" => Mod::LALTMOD,
+                "ralt" => Mod::RALTMOD,
+                "lsuper" => Mod::LGUIMOD,
+                "rsuper" => Mod::RGUIMOD,
+                _ => return Err("Unknown shortcut modifier"),
+            })
+    })
+}
+
+fn modifier_key(scan: Scancode) -> Mod {
+    match scan {
+        Scancode::LCtrl => Mod::LCTRLMOD,
+        Scancode::RCtrl => Mod::RCTRLMOD,
+        Scancode::LAlt => Mod::LALTMOD,
+        Scancode::RAlt => Mod::RALTMOD,
+        Scancode::LGui => Mod::LGUIMOD,
+        Scancode::RGui => Mod::RGUIMOD,
+        _ => Mod::NOMOD,
+    }
+}
+
 pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>> {
     let mode = std::env::var_os("SCRCTL_RUST_SDL");
     if mode.as_deref() == Some(std::ffi::OsStr::new("0")) {
@@ -61,6 +98,15 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()),
     )
     .ok()?;
+    if options.no_video
+        && !options.no_window
+        && (options.fullscreen
+            || options.window_borderless
+            || options.window_width != 0
+            || options.window_height != 0)
+    {
+        return None;
+    }
     if let Some(path) = options.record.as_deref() {
         let container = recording_container(path, options.record_format.as_deref()).is_some();
         let rotation = options.record_orientation.as_deref().unwrap_or("0");
@@ -195,9 +241,12 @@ enum Shortcut {
     Fullscreen,
     Rotate(i32),
     Flip(bool),
+    RotateDevice,
+    Pause(bool),
+    Fit(bool),
 }
 
-fn shortcut(event: &Event) -> Option<Shortcut> {
+fn shortcut(event: &Event, shortcut_mods: Mod) -> Option<Shortcut> {
     let Event::KeyDown {
         scancode: Some(key),
         keymod,
@@ -208,7 +257,7 @@ fn shortcut(event: &Event) -> Option<Shortcut> {
         return None;
     };
     let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
-    let shortcut_mod = keymod.intersects(Mod::LALTMOD | Mod::LGUIMOD);
+    let shortcut_mod = keymod.intersects(shortcut_mods);
     if *key == Scancode::F11
         && !shift
         && !keymod.intersects(
@@ -227,6 +276,10 @@ fn shortcut(event: &Event) -> Option<Shortcut> {
     }
     match (*key, shift) {
         (Scancode::Q, _) => Some(Shortcut::Quit),
+        (Scancode::Z, resume) => Some(Shortcut::Pause(resume)),
+        (Scancode::G, false) => Some(Shortcut::Fit(true)),
+        (Scancode::W, false) => Some(Shortcut::Fit(false)),
+        (Scancode::R, false) => Some(Shortcut::RotateDevice),
         (Scancode::F, false) => Some(Shortcut::Fullscreen),
         (Scancode::Left, false) => Some(Shortcut::Rotate(-90)),
         (Scancode::Right, false) => Some(Shortcut::Rotate(90)),
@@ -236,10 +289,30 @@ fn shortcut(event: &Event) -> Option<Shortcut> {
     }
 }
 
-#[derive(Default)]
 struct Input {
+    shortcut_mods: Mod,
     keys: BTreeSet<u16>,
     touch: Option<(f64, f64)>,
+    fingers: BTreeMap<(u64, u64), (u8, f64, f64)>,
+    buttons: BTreeMap<i32, u16>,
+    middle_home: bool,
+    virtual_axes: Option<(bool, bool)>,
+    virtual_touch: Option<(f64, f64)>,
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self {
+            shortcut_mods: Mod::LALTMOD | Mod::LGUIMOD,
+            keys: BTreeSet::new(),
+            fingers: BTreeMap::new(),
+            buttons: BTreeMap::new(),
+            touch: None,
+            middle_home: false,
+            virtual_axes: None,
+            virtual_touch: None,
+        }
+    }
 }
 
 impl Input {
@@ -247,10 +320,55 @@ impl Input {
         if let Some((x, y)) = self.touch.take() {
             let _ = session.touch(x, y, false);
         }
+        self.virtual_axes = None;
+        if let Some((x, y)) = self.virtual_touch.take() {
+            let _ = session.touch_contact(1, x, y, false);
+        }
+        for (_, (contact, x, y)) in std::mem::take(&mut self.fingers) {
+            let _ = session.touch_contact(contact, x, y, false);
+        }
+        for (_, usage) in std::mem::take(&mut self.buttons) {
+            let _ = session.button(usage, false);
+        }
+        if std::mem::take(&mut self.middle_home) {
+            let _ = session.button(0x40, false);
+        }
         if !self.keys.is_empty() {
             self.keys.clear();
             let _ = session.keyboard(&[]);
         }
+    }
+
+    fn send_virtual_touch(
+        &mut self,
+        session: &mut Session,
+        geometry: Geometry,
+        x: i32,
+        y: i32,
+        down: bool,
+    ) -> Result<(), scrctl_ios::Error> {
+        if let Some((invert_x, invert_y)) = self.virtual_axes {
+            let center = geometry.area.center();
+            let x = if invert_x {
+                center.x().saturating_mul(2).saturating_sub(x)
+            } else {
+                x
+            };
+            let y = if invert_y {
+                center.y().saturating_mul(2).saturating_sub(y)
+            } else {
+                y
+            };
+            if let Some((u, v)) = geometry.point(x, y, true) {
+                self.virtual_touch = Some((u, v));
+                session.touch_contact(1, u, v, down)?;
+            }
+            if !down {
+                self.virtual_axes = None;
+                self.virtual_touch = None;
+            }
+        }
+        Ok(())
     }
 
     fn event(
@@ -259,6 +377,7 @@ impl Input {
         session: &mut Session,
         event: Event,
         geometry: Geometry,
+        window_size: (u32, u32),
     ) -> Result<(), scrctl_ios::Error> {
         if !enabled {
             return Ok(());
@@ -272,32 +391,177 @@ impl Input {
                 ..
             } => self.release(session),
             Event::MouseButtonDown {
-                mouse_btn: MouseButton::Left,
+                mouse_btn: MouseButton::Middle,
+                ..
+            } if !self.middle_home => {
+                self.middle_home = true;
+                session.button(0x40, true)?;
+            }
+            Event::MouseButtonUp {
+                mouse_btn: MouseButton::Middle,
+                ..
+            } if self.middle_home => {
+                session.button(0x40, false)?;
+                self.middle_home = false;
+            }
+            Event::KeyDown {
+                scancode: Some(scan),
+                keymod,
+                repeat,
+                ..
+            } if keymod.intersects(self.shortcut_mods)
+                && !keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD)
+                && !self.keys.contains(&(scan as u16)) =>
+            {
+                let code = scan as i32;
+                if repeat {
+                    if let Some(&usage @ (0xe9 | 0xea)) = self.buttons.get(&code) {
+                        session.button(usage, true)?;
+                    }
+                } else if let Some(usage) = match scan {
+                    Scancode::H => Some(0x40),
+                    Scancode::P => Some(0x30),
+                    Scancode::Up => Some(0xe9),
+                    Scancode::Down => Some(0xea),
+                    _ => None,
+                } && !self.buttons.contains_key(&code)
+                {
+                    self.buttons.insert(code, usage);
+                    session.button(usage, true)?;
+                }
+            }
+            Event::KeyUp {
+                scancode: Some(scan),
+                ..
+            } if self.buttons.contains_key(&(scan as i32)) => {
+                let code = scan as i32;
+                session.button(self.buttons[&code], false)?;
+                self.buttons.remove(&code);
+            }
+            Event::FingerDown {
+                touch_id,
+                finger_id,
                 x,
                 y,
                 ..
             }
-            | Event::MouseMotion { x, y, .. }
-                if matches!(event, Event::MouseButtonDown { .. }) || self.touch.is_some() =>
-            {
-                if let Some((u, v)) =
-                    geometry.point(x.floor() as i32, y.floor() as i32, self.touch.is_some())
+            | Event::FingerMotion {
+                touch_id,
+                finger_id,
+                x,
+                y,
+                ..
+            }
+            | Event::FingerUp {
+                touch_id,
+                finger_id,
+                x,
+                y,
+                ..
+            }
+            | Event::FingerCanceled {
+                touch_id,
+                finger_id,
+                x,
+                y,
+                ..
+            } if session.supports_multi_touch() && self.touch.is_none() => {
+                use sdl3::sys::touch::{
+                    SDL_GetTouchDeviceType, SDL_TOUCH_DEVICE_DIRECT, SDL_TouchID,
+                };
+                // Trackpads and other indirect devices are handled by mouse input.
+                if unsafe { SDL_GetTouchDeviceType(SDL_TouchID(touch_id)) }
+                    != SDL_TOUCH_DEVICE_DIRECT
                 {
+                    return Ok(());
+                }
+                let key = (touch_id, finger_id);
+                let position = || {
+                    geometry.point(
+                        (x.clamp(0.0, 1.0) * window_size.0.saturating_sub(1) as f32) as i32,
+                        (y.clamp(0.0, 1.0) * window_size.1.saturating_sub(1) as f32) as i32,
+                        self.fingers.contains_key(&key),
+                    )
+                };
+                if matches!(event, Event::FingerDown { .. }) {
+                    if !self.fingers.contains_key(&key)
+                        && x.is_finite()
+                        && y.is_finite()
+                        && let Some((u, v)) = position()
+                        && let Some(contact) =
+                            (0..5).find(|id| !self.fingers.values().any(|f| f.0 == *id))
+                    {
+                        self.fingers.insert(key, (contact, u, v));
+                        session.touch_contact(contact, u, v, true)?;
+                    }
+                } else if let Some(&(contact, last_x, last_y)) = self.fingers.get(&key) {
+                    let (u, v) = if x.is_finite() && y.is_finite() {
+                        position().unwrap_or((last_x, last_y))
+                    } else {
+                        (last_x, last_y)
+                    };
+                    let down = matches!(event, Event::FingerMotion { .. });
+                    session.touch_contact(contact, u, v, down)?;
+                    if down {
+                        self.fingers.insert(key, (contact, u, v));
+                    } else {
+                        self.fingers.remove(&key);
+                    }
+                }
+            }
+            Event::MouseButtonDown {
+                mouse_btn: MouseButton::Left,
+                which,
+                x,
+                y,
+                ..
+            } if self.fingers.is_empty()
+                && self.touch.is_none()
+                && (!session.supports_multi_touch() || which != u32::MAX) =>
+            {
+                if let Some((u, v)) = geometry.point(x.floor() as i32, y.floor() as i32, false) {
+                    let mods = unsafe { sdl3::sys::keyboard::SDL_GetModState() };
+                    let mods = Mod::from_bits_truncate(mods.0);
+                    let ctrl = mods.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+                    let shift = mods.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+                    if session.supports_multi_touch() && (ctrl || shift) {
+                        self.virtual_axes = Some((ctrl != shift, ctrl));
+                    }
                     self.touch = Some((u, v));
                     session.touch(u, v, true)?;
+                    self.send_virtual_touch(
+                        session,
+                        geometry,
+                        x.floor() as i32,
+                        y.floor() as i32,
+                        true,
+                    )?;
+                }
+            }
+            Event::MouseMotion { which, x, y, .. }
+                if self.touch.is_some()
+                    && (!session.supports_multi_touch() || which != u32::MAX) =>
+            {
+                let (x, y) = (x.floor() as i32, y.floor() as i32);
+                if let Some((u, v)) = geometry.point(x, y, true) {
+                    self.touch = Some((u, v));
+                    session.touch(u, v, true)?;
+                    self.send_virtual_touch(session, geometry, x, y, true)?;
                 }
             }
             Event::MouseButtonUp {
                 mouse_btn: MouseButton::Left,
+                which,
                 x,
                 y,
                 ..
-            } if self.touch.is_some() => {
-                let (u, v) = geometry
-                    .point(x.floor() as i32, y.floor() as i32, true)
-                    .expect("active pointer");
-                session.touch(u, v, false)?;
+            } if self.touch.is_some() && (!session.supports_multi_touch() || which != u32::MAX) => {
+                let (x, y) = (x.floor() as i32, y.floor() as i32);
+                if let Some((u, v)) = geometry.point(x, y, true) {
+                    session.touch(u, v, false)?;
+                }
                 self.touch = None;
+                self.send_virtual_touch(session, geometry, x, y, false)?;
             }
             Event::KeyDown {
                 scancode: Some(scan),
@@ -311,9 +575,10 @@ impl Input {
                 repeat: false,
                 ..
             } => {
-                if matches!(scan, Scancode::LAlt | Scancode::LGui | Scancode::F11)
+                if scan == Scancode::F11
+                    || self.shortcut_mods.intersects(modifier_key(scan))
                     || (matches!(event, Event::KeyDown { .. })
-                        && keymod.intersects(Mod::LALTMOD | Mod::LGUIMOD))
+                        && keymod.intersects(self.shortcut_mods))
                 {
                     return Ok(());
                 }
@@ -405,25 +670,53 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
     }
     let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
-    let mut canvas = video
-        .window(&config.window_title, 420, 840)
-        .resizable()
-        .position_centered()
-        .build()?
-        .into_canvas();
+    let mut builder = video.window(
+        &config.window_title,
+        if config.window_width > 0 {
+            config.window_width
+        } else if config.window_height > 0 {
+            ((u64::from(config.window_height) * u64::from(frame.width)) / u64::from(frame.height))
+                .clamp(1, u64::from(i32::MAX as u32)) as u32
+        } else {
+            420
+        },
+        if config.window_height > 0 {
+            config.window_height
+        } else if config.window_width > 0 {
+            ((u64::from(config.window_width) * u64::from(frame.height)) / u64::from(frame.width))
+                .clamp(1, u64::from(i32::MAX as u32)) as u32
+        } else {
+            840
+        },
+    );
+    builder.resizable().position_centered();
+    if config.window_borderless {
+        builder.borderless();
+    }
+    let mut window = builder.build()?;
+    if config.fullscreen {
+        window.set_fullscreen(true)?;
+    }
+    let mut canvas = window.into_canvas();
     let creator = canvas.texture_creator();
     let mut texture =
         creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
     let mut texture_size = (frame.width, frame.height);
     let mut playback = start_playback(&sdl, &mut session, &config)?;
-    let mut input = Input::default();
+    let mut input = Input {
+        shortcut_mods: config.shortcut_mod,
+        ..Input::default()
+    };
     let mut geometry = Geometry::new(&frame, canvas.window().size());
     let start = Instant::now();
     let mut rotation = 0;
     let mut flip = (false, false);
+    let mut paused = false;
+    let mut refresh = false;
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
+        let mut frame_serial = frame.serial;
         'running: loop {
             if texture_size != (frame.width, frame.height) {
                 texture = creator.create_texture_streaming(
@@ -492,10 +785,33 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                     ) {
                         break 'running;
                     }
-                    if let Some(action) = shortcut(&event) {
+                    if let Some(action) = shortcut(&event, input.shortcut_mods) {
                         input.release(&mut session);
                         match action {
                             Shortcut::Quit => break 'running,
+                            Shortcut::Fit(actual) => {
+                                use sdl3::video::FullscreenType;
+                                if canvas.window().fullscreen_state() == FullscreenType::Off {
+                                    let mut size = if actual {
+                                        geometry.panel
+                                    } else {
+                                        (geometry.area.width(), geometry.area.height())
+                                    };
+                                    if actual && geometry.angle % 180 != 0 {
+                                        size = (size.1, size.0);
+                                    }
+                                    canvas.window_mut().set_size(size.0, size.1)?;
+                                }
+                            }
+                            Shortcut::Pause(resume) => {
+                                paused = !resume;
+                                refresh = paused;
+                            }
+                            Shortcut::RotateDevice => {
+                                if !config.no_control {
+                                    session.rotate_device()?;
+                                }
+                            }
                             Shortcut::Fullscreen => {
                                 use sdl3::video::FullscreenType;
                                 let enter =
@@ -524,15 +840,24 @@ fn run(config: Options) -> Result<(), Box<dyn Error>> {
                             ..
                         }
                     );
-                    input.event(!config.no_control, &mut session, event, geometry)?;
+                    input.event(
+                        !config.no_control && !paused,
+                        &mut session,
+                        event,
+                        geometry,
+                        canvas.window().size(),
+                    )?;
                     if redraw {
                         continue 'running;
                     }
                 }
                 fill_playback(&mut playback, &mut session, config.record.is_some());
-                if let Some(next) = session.next_frame(frame.serial, 8)? {
-                    frame = next;
-                    break;
+                if let Some(next) = session.next_frame(frame_serial, 8)? {
+                    frame_serial = next.serial;
+                    if !paused || std::mem::take(&mut refresh) {
+                        frame = next;
+                        break;
+                    }
                 }
             }
         }
@@ -725,16 +1050,19 @@ mod tests {
     #[test]
     fn local_shortcuts_respect_modifiers_and_ignore_repeat() {
         let action = |scan, keymod, repeat| {
-            shortcut(&Event::KeyDown {
-                timestamp: 0,
-                window_id: 1,
-                keycode: None,
-                scancode: Some(scan),
-                keymod,
-                repeat,
-                which: 0,
-                raw: 0,
-            })
+            shortcut(
+                &Event::KeyDown {
+                    timestamp: 0,
+                    window_id: 1,
+                    keycode: None,
+                    scancode: Some(scan),
+                    keymod,
+                    repeat,
+                    which: 0,
+                    raw: 0,
+                },
+                Mod::LALTMOD | Mod::LGUIMOD,
+            )
         };
         assert_eq!(
             action(Scancode::Q, Mod::LALTMOD, false),
@@ -817,16 +1145,58 @@ mod tests {
             },
         ];
         for event in batch.iter().cloned() {
-            input.event(false, &mut session, event, geometry).unwrap();
+            input
+                .event(false, &mut session, event, geometry, (400, 400))
+                .unwrap();
         }
         assert!(input.touch.is_none() && input.keys.is_empty());
         for event in batch.iter().cloned() {
-            input.event(true, &mut session, event, geometry).unwrap();
+            input
+                .event(true, &mut session, event, geometry, (400, 400))
+                .unwrap();
         }
         for event in batch.into_iter().take(2) {
-            input.event(true, &mut session, event, geometry).unwrap();
+            input
+                .event(true, &mut session, event, geometry, (400, 400))
+                .unwrap();
         }
         input.release(&mut session);
+        let volume_down = |repeat| Event::KeyDown {
+            timestamp: 0,
+            window_id: 1,
+            keycode: None,
+            scancode: Some(Scancode::Up),
+            keymod: Mod::LALTMOD,
+            repeat,
+            which: 0,
+            raw: 0,
+        };
+        let volume_up = Event::KeyUp {
+            timestamp: 0,
+            window_id: 1,
+            keycode: None,
+            scancode: Some(Scancode::Up),
+            keymod: Mod::NOMOD,
+            repeat: false,
+            which: 0,
+            raw: 0,
+        };
+        for event in [
+            volume_down(false),
+            volume_down(true),
+            volume_up,
+            volume_down(false),
+        ] {
+            input
+                .event(true, &mut session, event, geometry, (400, 400))
+                .unwrap();
+        }
+        input.virtual_axes = Some((true, true));
+        input
+            .send_virtual_touch(&mut session, geometry, 70, 65, true)
+            .unwrap();
+        input.release(&mut session);
+        session.rotate_device().unwrap();
         session.close().unwrap();
     }
 }
