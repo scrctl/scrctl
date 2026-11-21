@@ -75,7 +75,7 @@ struct Options {
     /// Comma-separated shortcut modifiers: lctrl, rctrl, lalt, ralt, lsuper, rsuper
     #[arg(long, default_value = "lalt,lsuper", value_parser = parse_shortcut_mod)]
     shortcut_mod: Mod,
-    #[arg(long, conflicts_with_all = ["no_hw_decode", "no_video"])]
+    #[arg(long, conflicts_with = "no_hw_decode")]
     hw_decode: bool,
     /// Use software video decoding
     #[arg(long)]
@@ -87,10 +87,10 @@ struct Options {
     #[arg(long, value_parser = parse_degrade_marks)]
     test_degrade: Option<DegradeMarks>,
     /// Request a device bitrate ceiling in bit/s, optionally suffixed K or M; 0 uses device defaults
-    #[arg(short = 'b', long, value_parser = parse_bit_rate, conflicts_with = "no_video")]
+    #[arg(short = 'b', long, value_parser = parse_bit_rate)]
     video_bit_rate: Option<u64>,
     /// Limit decoded receiver output to 0–240 fps; 0 means unlimited
-    #[arg(long, value_parser = clap::value_parser!(u16).range(..=240), conflicts_with = "no_video")]
+    #[arg(long, value_parser = clap::value_parser!(u16).range(..=240))]
     max_fps: Option<u16>,
     #[command(flatten)]
     window: WindowOptions,
@@ -611,11 +611,18 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
             "wifi_port",
             "lang",
         ];
-        if Options::command().get_arguments().any(|arg| {
+        if command.get_arguments().any(|arg| {
             let id = arg.get_id().as_str();
             explicit(id) && !DDI_OPTIONS.contains(&id)
         }) {
-            return None;
+            let flag = if explicit("install_ddi") {
+                "--install-ddi"
+            } else {
+                "--download-ddi"
+            };
+            return invalid(&format!(
+                "{flag}: Use only DDI, device selection and language options with this standalone command"
+            ));
         }
         return options.commands.run(&options.target).map(Ok);
     }
@@ -623,28 +630,95 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
         return None;
     }
     let orientations = Orientations::resolve(&matches);
-    if options.no_audio_playback
-        && options.record.as_deref().is_none_or(|path| {
-            recording_container(path, options.record_format.as_deref()).is_none()
-        })
-    {
+    if options.record.as_deref() == Some("") {
+        if options.record_format.is_some() {
+            return invalid("--record-format: Requires a nonempty recording file");
+        }
+        options.record = None;
+    }
+    let container = options
+        .record
+        .as_deref()
+        .and_then(|path| recording_container(path, options.record_format.as_deref()));
+    if options.no_audio_playback && container.is_none() {
         options.no_audio = true;
     }
+    if options.audio_dup && options.no_audio {
+        return invalid(
+            "--audio-dup: Audio capture is disabled; --audio-dup requires playback or MP4/MKV recording",
+        );
+    }
+
+    let screenshots = options.video_source.as_deref() == Some("screenshot");
     if options.record.is_none()
         && (options.no_window || options.no_video_playback)
         && options.exit_after == 0
         && !options.hw_decode
-        && options.video_source.as_deref() != Some("screenshot")
+        && !screenshots
         && options.test_degrade.is_none()
     {
-        if options.max_fps.is_some() || options.video_bit_rate.is_some() {
-            return None;
-        }
         options.no_video = true;
     }
-    if (options.no_video && options.exit_after > 0) || (options.audio_dup && options.no_audio) {
-        return None;
+    if (options.max_fps.is_some() || options.video_bit_rate.is_some())
+        && (options.no_video || screenshots)
+    {
+        return invalid("--video-bit-rate/--max-fps: Requires live video stream capture");
     }
+    let rotation = orientations.record.angle.unwrap_or_default();
+    if options.no_video && options.record.is_some() {
+        if container.is_none() {
+            return invalid(
+                "--record: Audio-only recording requires MP4 or MKV; raw HEVC cannot contain audio",
+            );
+        }
+        if options.no_audio {
+            return invalid(
+                "--record: Recording requires at least one enabled audio or video track",
+            );
+        }
+        if rotation != 0 || orientations.record.flip {
+            return invalid("--record-orientation: Recording orientation requires a video track");
+        }
+    }
+    if options.no_video
+        && (options.exit_after > 0
+            || options.hw_decode
+            || options.test_degrade.is_some()
+            || screenshots)
+    {
+        return invalid(
+            "--no-video: Frame counting, hardware decoding, fallback tests and screenshots require video capture",
+        );
+    }
+    if screenshots && container.is_some() {
+        return invalid(
+            "--record: Container recording requires live video; screenshot polling cannot be recorded",
+        );
+    }
+    if options.record.is_some() {
+        if orientations.record.flip {
+            return invalid(
+                "--record-orientation: Recording does not support flipping; use --display-orientation for display-only flipping or reset --record-orientation to a rotation",
+            );
+        }
+        if container.is_none() && rotation != 0 {
+            return invalid(
+                "--record: Recording rotation requires MP4 or MKV; use --display-orientation to rotate only the display",
+            );
+        }
+    }
+    if options.diagnostics.has_verify() {
+        if options.diagnostics.verify_at().is_none() {
+            return invalid("--verify: Frame number must be a positive integer");
+        }
+        if options.no_window {
+            return invalid("--verify: Requires a window; incompatible with --no-window");
+        }
+        if options.no_video || options.no_video_playback {
+            return invalid("--verify: Window readback requires video playback");
+        }
+    }
+
     let startup_control = options
         .start_app
         .as_ref()
@@ -655,46 +729,21 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<i32, Box<dyn Error>>
             .test_type
             .as_ref()
             .is_some_and(|text| !text.is_empty());
-    if (options.no_video
+    if !options.version
+        && !options.commands.is_requested()
+        && options.no_video
         && options.no_audio
-        && (options.no_control || (options.no_window && !startup_control)))
-        || (options.diagnostics.has_verify()
-            && (options.diagnostics.verify_at().is_none()
-                || options.no_window
-                || options.no_video
-                || options.no_video_playback))
+        && (options.no_control || (options.no_window && !startup_control))
+    {
+        return invalid("--no-playback: Nothing to do: enable media, recording or device control");
+    }
+    if (screenshots && options.record.is_some())
         || options
             .start_app
             .as_ref()
             .is_some_and(|app| !app.is_empty() && app.trim_start_matches(['?', '+']).is_empty())
     {
         return None;
-    }
-    let screenshots = options.video_source.as_deref() == Some("screenshot");
-    if (options.no_video && (screenshots || options.test_degrade.is_some()))
-        || (screenshots
-            && (options.record.is_some()
-                || options.max_fps.is_some()
-                || options.video_bit_rate.is_some()))
-    {
-        return None;
-    }
-    if let Some(path) = options.record.as_deref() {
-        let container = recording_container(path, options.record_format.as_deref()).is_some();
-        let rotation = orientations.record.angle.unwrap_or_default();
-        if orientations.record.flip && !options.no_video {
-            return invalid(
-                "--record-orientation: Recording does not support flipping; use --display-orientation for display-only flipping or reset --record-orientation to a rotation",
-            );
-        }
-        if path.is_empty()
-            || (options.no_video && (!container || options.no_audio || options.exit_after != 0))
-            || orientations.record.flip
-            || ((!container || options.no_video) && rotation != 0)
-            || (!container && options.no_audio_playback && options.audio_dup)
-        {
-            return None;
-        }
     }
     if options.version {
         println!("scrctl {}", env!("SCRCTL_PUBLIC_VERSION"));

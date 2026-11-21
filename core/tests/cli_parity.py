@@ -38,6 +38,15 @@ if native:
         ["--wifi=auto", "--wifi-port=49152"],
         ["--test-touch", "0.25,0.5"],
         ["--record", "probe.mp4", "--record-orientation", "flip0"],
+        ["--no-window", "--verify", "2", "probe.bmp"],
+        ["--verify", "0", "probe.bmp"],
+        ["--no-video", "--exit-after", "3"],
+        ["--no-video", "--record", "probe.hevc"],
+        ["--no-video", "--no-audio", "--record", "probe.mkv"],
+        ["--video-source", "screenshot", "--record", "probe.mkv"],
+        ["--no-window", "--no-audio", "--max-fps", "10"],
+        ["--no-audio-playback", "--audio-dup"],
+        ["--download-ddi", "--no-audio"],
     ):
         old = subprocess.run([legacy, *args], env=env, capture_output=True, timeout=10)
         new = subprocess.run([launcher, *args], env=native_env, capture_output=True, timeout=10)
