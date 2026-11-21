@@ -80,6 +80,21 @@ with FakeServer() as peer:
     print("PASS windowed recording with explicit orientation")
 
 
+with FakeServer() as peer:
+    env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+               SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+    result = subprocess.run(
+        [sys.argv[1], "-N", "--no-control", "--time-limit", "1", "--record", "quiet.mkv"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0 and "encoded video recording finalized" in result.stdout, result
+    assert ("video.start", {"decode": False, "hardware_decode": False}) in peer.calls
+    assert ("audio.start", {"decode": False, "duplicate": False, "buffer_ms": 50}) in peer.calls
+    assert "video.frame" not in peer.methods() and "audio.read" not in peer.methods()
+    assert peer.methods()[-2:] == ["media.finish", "connection.close"], peer.calls
+    print("PASS disabled playback preserves encoded audio and video recording")
+
+
 if os.name == "posix":
     with FakeServer() as peer:
         env = dict(os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent")

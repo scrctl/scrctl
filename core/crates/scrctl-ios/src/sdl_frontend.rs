@@ -72,6 +72,10 @@ struct Options {
     record_orientation: Vec<DisplayOrientation>,
     #[arg(long)]
     no_video: bool,
+    #[arg(long)]
+    no_video_playback: bool,
+    #[arg(short = 'N', long)]
+    no_playback: bool,
     #[arg(long, default_value_t = 0)]
     time_limit: u64,
     #[arg(long, default_value_t = 0)]
@@ -324,9 +328,18 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
     let matches = Options::command()
         .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
         .ok()?;
-    let options = Options::from_arg_matches(&matches).ok()?;
+    let mut options = Options::from_arg_matches(&matches).ok()?;
+    if options.no_playback {
+        options.no_video_playback = true;
+        options.no_audio_playback = true;
+    }
+    // Keep the background window with active input on the legacy path until
+    // its keyboard and shortcuts are available in the Rust frontend.
+    if options.no_video_playback && !options.no_window && !options.no_control {
+        return None;
+    }
     let orientations = Orientations::resolve(&matches);
-    if options.no_video
+    if (options.no_video || options.no_video_playback)
         && !options.no_window
         && (options.fullscreen
             || options.window_borderless
@@ -347,6 +360,7 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
             return None;
         }
     } else if options.no_video
+        || ((options.no_window || options.no_video_playback) && options.exit_after == 0)
         || (options.exit_after == 0 && mode.as_deref() != Some(std::ffi::OsStr::new("1")))
     {
         return None;
@@ -983,7 +997,9 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 audio: container.is_some() && !config.no_audio,
                 video: !config.no_video,
                 decode_video: !config.no_video
-                    && (!config.no_window || config.exit_after > 0 || config.hw_decode),
+                    && ((!config.no_window && !config.no_video_playback)
+                        || config.exit_after > 0
+                        || config.hw_decode),
                 orientation: orientations.record.angle.map(|angle| angle as u16),
             })
         })
@@ -1019,7 +1035,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
         session.start_recording_audio(config.audio_dup, config.audio_buffer)?;
         println!("Local audio playback disabled; recording original AAC without PCM decoding");
     }
-    if config.no_window || config.no_video {
+    if config.no_window || config.no_video || config.no_video_playback {
         return run_headless(&sdl, events, session, first_frame, &config);
     }
     let mut frame = first_frame.expect("windowed session decodes video");
