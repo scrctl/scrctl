@@ -24,3 +24,6 @@ CMakeUserPresets.json
 .DS_Store
 .idea/
 .vscode/
+
+# Rust core build artifacts
+/core/target/

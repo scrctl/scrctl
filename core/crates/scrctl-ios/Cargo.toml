@@ -1,0 +1,19 @@
+[package]
+name = "scrctl-ios"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+xdb = ["dep:serde_json", "dep:clap"]
+
+[dependencies]
+serde_json = { version = "1", optional = true }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
+
+[[bin]]
+name = "scrctl-rs"
+path = "src/main.rs"
+required-features = ["xdb"]
