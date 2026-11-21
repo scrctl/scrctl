@@ -39,3 +39,29 @@ On macOS, reuse the library path from the example above:
 cargo build --manifest-path core/Cargo.toml -p scrctl-ios --features xdb --example session_fixture --locked
 DYLD_LIBRARY_PATH="$XDB_LIB_DIR" python3 core/tests/ios_session.py core/target/debug/examples/session_fixture
 ```
+
+## Select a target type
+
+Put the optional selector first. Existing iOS commands keep their arguments
+and behavior, with or without an explicit iOS selector.
+
+```sh
+scrctl --target-type ios --wifi auto
+scrctl --target-type vnc 192.0.2.10 --port 5900
+scrctl --target-type mac mac.example
+```
+
+The desktop commands are connection checks for this stage. They use the Rust
+RFB engine, print the first framebuffer size, close the session, and exit.
+`mac` enables Apple Screen Sharing extensions. For hosts that require
+authentication, provide `SCRCTL_USERNAME` and `SCRCTL_PASSWORD` in the environment.
+
+The loopback CLI test checks RFB 3.8 and Apple RFB 3.889 negotiation, first
+frame, and clean disconnect. Pass the path to the original C++ executable to
+the parity test to compare legacy output and exit codes.
+
+```sh
+cargo build --manifest-path core/Cargo.toml -p scrctl-ios --bin scrctl --locked
+python3 core/tests/cli_targets.py core/target/debug/scrctl
+python3 core/tests/cli_parity.py /path/to/legacy/scrctl core/target/debug/scrctl
+```

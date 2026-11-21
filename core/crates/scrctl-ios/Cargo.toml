@@ -7,11 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-xdb = ["dep:serde_json", "dep:clap"]
+xdb = ["dep:serde_json"]
 
 [dependencies]
 serde_json = { version = "1", optional = true }
-clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
+rfb-engine = { path = "../rfb-engine" }
+tokio = { version = "1", features = ["rt", "time"] }
 
 [[bin]]
 name = "scrctl-rs"

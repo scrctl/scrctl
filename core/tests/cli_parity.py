@@ -13,11 +13,12 @@ for args in (
     ["--audio-buffer", "-1"],
     ["--ddi-product-type", "iPad11,2"],
 ):
-    direct, forwarded = (
-        subprocess.run(["scrctl", *args], executable=exe, env=env, capture_output=True)
-        for exe in (legacy, launcher)
-    )
-    if (direct.returncode, direct.stdout, direct.stderr) != (
-        forwarded.returncode, forwarded.stdout, forwarded.stderr
-    ):
-        raise SystemExit(f"CLI parity failed for {args}")
+    direct = subprocess.run(["scrctl", *args], executable=legacy, env=env, capture_output=True)
+    for selector in ([], ["--target-type", "ios"], ["--target-type=ios"]):
+        forwarded = subprocess.run(
+            ["scrctl", *selector, *args], executable=launcher, env=env, capture_output=True,
+        )
+        if (direct.returncode, direct.stdout, direct.stderr) != (
+            forwarded.returncode, forwarded.stdout, forwarded.stderr
+        ):
+            raise SystemExit(f"CLI parity failed for {selector + args}")

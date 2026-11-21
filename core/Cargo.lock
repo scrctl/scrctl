@@ -2237,7 +2237,9 @@ name = "scrctl-ios"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "rfb-engine",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
