@@ -170,6 +170,7 @@ pub struct Frame {
     pub height: u32,
     pub row_pitch: u32,
     pub display: Value,
+    pub screenshot: bool,
     pub pixels: Vec<u8>,
 }
 
@@ -190,6 +191,7 @@ pub struct VideoOptions<'a> {
     pub max_bitrate: Option<u64>,
     pub max_fps: u16,
     pub skip_video: bool,
+    pub screenshots: bool,
 }
 
 pub struct Session {
@@ -198,6 +200,7 @@ pub struct Session {
     port: u16,
     attachment: Option<String>,
     recording_pending: bool,
+    screenshots: bool,
 }
 
 impl Session {
@@ -270,6 +273,7 @@ impl Session {
             port,
             attachment: opened["attachment"].as_str().map(str::to_owned),
             recording_pending: recording.is_some(),
+            screenshots: options.screenshots,
         };
         let mut video = json!({
             "decode": decode,
@@ -295,8 +299,28 @@ impl Session {
                 video["record_path"] = json!(recording.path);
             }
         }
-        if !options.skip_video && recording.is_none_or(|recording| recording.video) {
-            session.client.request(c"video.start", video)?;
+        if !options.skip_video
+            && !options.screenshots
+            && recording.is_none_or(|recording| recording.video)
+        {
+            match session.client.request(c"video.start", video) {
+                Err(Error::Server { message, .. })
+                    if decode && recording.is_none() && message.contains("requires iOS") =>
+                {
+                    session.screenshots = true;
+                }
+                result => {
+                    let (value, _) = result?;
+                    for warning in value["warnings"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                    {
+                        eprintln!("Warning: {warning}");
+                    }
+                }
+            }
         }
         Ok(session)
     }
@@ -309,6 +333,34 @@ impl Session {
             Err(Error::Server { code, .. }) if code == "no_frame" => return Ok(None),
             result => result?,
         };
+        let serial = metadata["serial"]
+            .as_u64()
+            .filter(|serial| *serial > since)
+            .ok_or_else(|| Error::Client("Invalid XDB frame serial".into()))?;
+        Self::frame(metadata, pixels, serial, false).map(Some)
+    }
+
+    pub fn uses_screenshots(&self) -> bool {
+        self.screenshots
+    }
+
+    pub fn screenshot(&mut self) -> Result<Option<Frame>, Error> {
+        match self
+            .client
+            .request(c"screenshot", json!({"format": "bgra"}))
+        {
+            Ok((metadata, pixels)) => Self::frame(metadata, pixels, 0, true).map(Some),
+            Err(Error::Server { code, .. }) if code == "geometry_changed" => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn frame(
+        metadata: Value,
+        pixels: Vec<u8>,
+        serial: u64,
+        screenshot: bool,
+    ) -> Result<Frame, Error> {
         let dimension = |name| {
             metadata[name]
                 .as_u64()
@@ -320,22 +372,21 @@ impl Session {
             dimension("height"),
             dimension("row_pitch"),
         );
-        let serial = metadata["serial"].as_u64().filter(|serial| *serial > since);
-        if let Some(serial) = serial
-            && metadata["format"].as_str() == Some("bgra")
+        if metadata["format"].as_str() == Some("bgra")
             && width > 0
             && height > 0
             && u64::from(row_pitch) >= u64::from(width) * 4
             && u64::from(row_pitch) * u64::from(height) == pixels.len() as u64
         {
-            return Ok(Some(Frame {
+            return Ok(Frame {
                 serial,
                 width,
                 height,
                 row_pitch,
                 display: metadata["display"].clone(),
+                screenshot,
                 pixels,
-            }));
+            });
         }
         Err(Error::Client("Invalid XDB BGRA frame".into()))
     }
@@ -434,13 +485,17 @@ impl Session {
 
 impl Session {
     pub fn check_media(&mut self) -> Result<(), Error> {
+        self.media_status().map(|_| ())
+    }
+
+    pub fn media_status(&mut self) -> Result<Value, Error> {
         let (value, _) = self.client.request(c"media.status", json!({}))?;
         for field in ["error", "recording_error"] {
             if let Some(error) = value[field].as_str().filter(|value| !value.is_empty()) {
                 return Err(Error::Client(error.to_owned()));
             }
         }
-        Ok(())
+        Ok(value)
     }
 
     pub fn finish_media(&mut self) -> Result<(), Error> {

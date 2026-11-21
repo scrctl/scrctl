@@ -38,8 +38,10 @@ struct Options {
     hw_decode: bool,
     #[arg(long)]
     no_hw_decode: bool,
-    #[arg(long, value_parser = ["display", "stream"])]
+    #[arg(long, value_parser = ["display", "stream", "screenshot"])]
     video_source: Option<String>,
+    #[arg(long, value_parser = parse_degrade_marks)]
+    test_degrade: Option<DegradeMarks>,
     #[arg(short = 'b', long, value_parser = parse_bit_rate, conflicts_with = "no_video")]
     video_bit_rate: Option<u64>,
     #[arg(long, value_parser = clap::value_parser!(u16).range(..=240), conflicts_with = "no_video")]
@@ -276,6 +278,92 @@ fn parse_scale(value: &str) -> Result<f64, &'static str> {
         .ok_or("Expected a finite positive number")
 }
 
+#[derive(Clone)]
+struct DegradeMarks(Vec<u64>);
+
+fn parse_degrade_marks(value: &str) -> Result<DegradeMarks, &'static str> {
+    let mut marks = Vec::new();
+    for part in value.split(',') {
+        let millis = part
+            .trim_start()
+            .parse::<f64>()
+            .map_err(|_| "Invalid fallback time")?
+            * 1000.0;
+        if !millis.is_finite() || millis < 0.0 || millis >= u64::MAX as f64 {
+            return Err("Fallback times must be finite nonnegative seconds");
+        }
+        let millis = millis as u64;
+        if marks.last().is_some_and(|previous| millis < *previous) {
+            return Err("Fallback times must be in ascending order");
+        }
+        marks.push(millis);
+    }
+    Ok(DegradeMarks(marks))
+}
+
+struct FrameSource<'a> {
+    sequence: u64,
+    video_serial: u64,
+    video_unusable: bool,
+    started: Instant,
+    next_status: Instant,
+    next_screenshot: Instant,
+    marks: &'a [u64],
+}
+
+impl<'a> FrameSource<'a> {
+    fn new(marks: &'a [u64]) -> Self {
+        let now = Instant::now();
+        Self {
+            sequence: 0,
+            video_serial: 0,
+            video_unusable: false,
+            started: now,
+            next_status: now,
+            next_screenshot: now,
+            marks,
+        }
+    }
+
+    fn next(
+        &mut self,
+        session: &mut Session,
+        timeout: u16,
+    ) -> Result<Option<Frame>, scrctl_ios::Error> {
+        let now = Instant::now();
+        if now >= self.next_status {
+            self.video_unusable = session.media_status()?["video_unusable"] == true;
+            self.next_status = now + Duration::from_secs(1);
+        }
+        let elapsed = self.started.elapsed().as_millis();
+        let forced = self.marks.partition_point(|&ms| u128::from(ms) <= elapsed) % 2 == 1;
+        let screenshot = session.uses_screenshots() || forced || self.video_unusable;
+        let frame = if screenshot {
+            if now < self.next_screenshot {
+                std::thread::sleep(
+                    self.next_screenshot
+                        .duration_since(now)
+                        .min(Duration::from_millis(u64::from(timeout))),
+                );
+                return Ok(None);
+            }
+            let result = session.screenshot();
+            self.next_screenshot = Instant::now() + Duration::from_millis(100);
+            result?
+        } else {
+            session.next_frame(self.video_serial, timeout)?
+        };
+        Ok(frame.map(|mut frame| {
+            if !screenshot {
+                self.video_serial = frame.serial;
+            }
+            self.sequence += 1;
+            frame.serial = self.sequence;
+            frame
+        }))
+    }
+}
+
 fn parse_bit_rate(value: &str) -> Result<u64, &'static str> {
     let (digits, multiplier) = match value.as_bytes().last() {
         Some(b'K' | b'k') => (&value[..value.len() - 1], 1_000),
@@ -355,6 +443,8 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         && (options.no_window || options.no_video_playback)
         && options.exit_after == 0
         && !options.hw_decode
+        && options.video_source.as_deref() != Some("screenshot")
+        && options.test_degrade.is_none()
     {
         if options.max_fps.is_some() || options.video_bit_rate.is_some() {
             return None;
@@ -362,6 +452,15 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         options.no_video = true;
     }
     if (options.no_video && options.exit_after > 0) || (options.audio_dup && options.no_audio) {
+        return None;
+    }
+    let screenshots = options.video_source.as_deref() == Some("screenshot");
+    if (options.no_video && (screenshots || options.test_degrade.is_some()))
+        || (screenshots
+            && (options.record.is_some()
+                || options.max_fps.is_some()
+                || options.video_bit_rate.is_some()))
+    {
         return None;
     }
     if let Some(path) = options.record.as_deref() {
@@ -422,6 +521,7 @@ struct Geometry {
     angle: i32,
     panel: (u32, u32),
     source: Rect,
+    pixel_angle: Option<i32>,
 }
 
 impl Geometry {
@@ -449,11 +549,45 @@ impl Geometry {
         } else {
             (frame.width, frame.height)
         };
+        let device_angle = match frame.display["orientation"].as_str() {
+            Some("rot0") => Some(0),
+            Some("rot90") => Some(90),
+            Some("rot180") => Some(180),
+            Some("rot270") => Some(270),
+            _ => None,
+        };
+        let screenshot_angle = if frame.screenshot {
+            device_angle.unwrap_or_default()
+        } else {
+            0
+        };
+        let swapped = screenshot_angle % 180 != 0;
+        let (expected_w, expected_h) = if swapped {
+            (fallback.1, fallback.0)
+        } else {
+            fallback
+        };
         let panel = (
-            dimension("width", fallback.0),
-            dimension("height", fallback.1),
+            dimension("width", expected_w),
+            dimension("height", expected_h),
         );
-        let [w, h, x, y] = crop.unwrap_or([panel.0, panel.1, 0, 0]);
+        let screenshot_valid = (!frame.screenshot || device_angle.is_some())
+            && (!frame.screenshot
+                || (if swapped { (panel.1, panel.0) } else { panel })
+                    == (frame.width, frame.height))
+            && (!frame.screenshot
+                || frame.display["width"]
+                    .as_u64()
+                    .is_none_or(|w| w == 0 || w == u64::from(panel.0))
+                    && frame.display["height"]
+                        .as_u64()
+                        .is_none_or(|h| h == 0 || h == u64::from(panel.1)));
+        let (w, h) = if frame.screenshot {
+            (frame.width, frame.height)
+        } else {
+            panel
+        };
+        let [w, h, x, y] = crop.unwrap_or([w, h, 0, 0]);
         let x = x.min(frame.width - 1);
         let y = y.min(frame.height - 1);
         let source = Rect::new(
@@ -462,13 +596,12 @@ impl Geometry {
             w.min(frame.width - x),
             h.min(frame.height - y),
         );
-        let device_angle = match frame.display["orientation"].as_str() {
-            Some("rot90") => 90,
-            Some("rot180") => 180,
-            Some("rot270") => 270,
-            _ => 0,
+        let base_angle = if frame.screenshot {
+            0
+        } else {
+            device_angle.unwrap_or_default()
         };
-        let angle = (orientation.unwrap_or(device_angle) + offset).rem_euclid(360);
+        let angle = (orientation.unwrap_or(base_angle) + offset).rem_euclid(360);
         let (w, h) = if angle % 180 == 0 {
             (source.width(), source.height())
         } else {
@@ -482,6 +615,7 @@ impl Geometry {
             angle,
             panel,
             source,
+            pixel_angle: screenshot_valid.then_some(screenshot_angle),
             flip,
         }
     }
@@ -507,16 +641,28 @@ impl Geometry {
             270 => (1.0 - v, u),
             _ => (u, v),
         };
-        Some((
+        let pixel_angle = self.pixel_angle?;
+        let (w, h) = if pixel_angle % 180 == 0 {
+            self.panel
+        } else {
+            (self.panel.1, self.panel.0)
+        };
+        let (x, y) = (
             ((f64::from(self.source.x())
                 + f64::from(self.source.width()) * if self.flip.0 { 1.0 - x } else { x })
-                / f64::from(self.panel.0))
+                / f64::from(w))
             .clamp(0.0, 1.0),
             ((f64::from(self.source.y())
                 + f64::from(self.source.height()) * if self.flip.1 { 1.0 - y } else { y })
-                / f64::from(self.panel.1))
+                / f64::from(h))
             .clamp(0.0, 1.0),
-        ))
+        );
+        Some(match pixel_angle {
+            90 => (y, 1.0 - x),
+            180 => (1.0 - x, 1.0 - y),
+            270 => (1.0 - y, x),
+            _ => (x, y),
+        })
     }
 }
 
@@ -1036,7 +1182,8 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 decode_video: !config.no_video
                     && ((!config.no_window && !config.no_video_playback)
                         || config.exit_after > 0
-                        || config.hw_decode),
+                        || config.hw_decode
+                        || config.test_degrade.is_some()),
                 orientation: orientations.record.angle.map(|angle| angle as u16),
             })
         })
@@ -1053,13 +1200,20 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
             max_bitrate: config.video_bit_rate,
             max_fps: config.max_fps.unwrap_or_default(),
             skip_video: config.no_video,
+            screenshots: config.video_source.as_deref() == Some("screenshot"),
         },
     )?;
+    let mut source = FrameSource::new(
+        config
+            .test_degrade
+            .as_ref()
+            .map_or(&[], |marks| marks.0.as_slice()),
+    );
     let decode_video = !config.no_video && recording.is_none_or(|recording| recording.decode_video);
     let first_frame = if decode_video {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(frame) = session.next_frame(0, 20)? {
+            if let Some(frame) = source.next(&mut session, 20)? {
                 break Some(frame);
             }
             if Instant::now() >= deadline {
@@ -1077,7 +1231,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
         return Ok(session.close()?);
     }
     if config.no_window || config.no_video || config.no_video_playback {
-        return run_headless(&sdl, events, session, first_frame, &config);
+        return run_headless(&sdl, events, session, first_frame, source, &config);
     }
     let mut frame = first_frame.expect("windowed session decodes video");
     let video = sdl.video()?;
@@ -1119,7 +1273,6 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
-        let mut frame_serial = frame.serial;
         'running: loop {
             if texture_size != (frame.width, frame.height) {
                 texture = creator.create_texture_streaming(
@@ -1295,8 +1448,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                     paste = None;
                 }
                 fill_playback(&mut playback, &mut session, config.record.is_some());
-                if let Some(next) = session.next_frame(frame_serial, 8)? {
-                    frame_serial = next.serial;
+                if let Some(next) = source.next(&mut session, 8)? {
                     if !paused || std::mem::take(&mut refresh) {
                         frame = next;
                         break;
@@ -1336,7 +1488,7 @@ fn start_playback(
     session: &mut Session,
     config: &Options,
 ) -> Result<Option<Playback>, Box<dyn Error>> {
-    if config.no_audio || config.no_audio_playback {
+    if config.no_audio || config.no_audio_playback || session.uses_screenshots() {
         return Ok(None);
     }
     let recording = config.record.is_some();
@@ -1389,6 +1541,7 @@ fn run_headless(
     mut events: sdl3::EventPump,
     mut session: Session,
     first_frame: Option<Frame>,
+    mut source: FrameSource<'_>,
     config: &Options,
 ) -> Result<(), Box<dyn Error>> {
     let mut background = if config.no_window {
@@ -1431,6 +1584,7 @@ fn run_headless(
         source: Rect::new(0, 0, 1, 1),
         angle: 0,
         panel: (1, 1),
+        pixel_angle: None,
         flip: (false, false),
     };
     let mut playback = match start_playback(sdl, &mut session, config) {
@@ -1443,7 +1597,6 @@ fn run_headless(
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let decode_video = first_frame.is_some();
         let mut count = u64::from(decode_video);
-        let mut serial = first_frame.as_ref().map_or(0, |frame| frame.serial);
         drop(first_frame);
         let start = Instant::now();
         let mut next_status = start;
@@ -1552,8 +1705,7 @@ fn run_headless(
             }
             fill_playback(&mut playback, &mut session, config.record.is_some());
             if decode_video {
-                if let Some(frame) = session.next_frame(serial, 8)? {
-                    serial = frame.serial;
+                if source.next(&mut session, 8)?.is_some() {
                     count += 1;
                 }
             } else {
@@ -1638,6 +1790,7 @@ mod tests {
             height: 22,
             row_pitch: 48,
             pixels: Vec::new(),
+            screenshot: false,
             display: serde_json::json!({"width": 10, "height": 20, "orientation": "rot90"}),
         };
         let geometry = Geometry::transformed(&frame, (400, 400), None, 0, (false, false), None);
@@ -1657,6 +1810,20 @@ mod tests {
         assert_eq!(cropped.source, Rect::new(2, 4, 4, 8));
         assert_eq!(cropped.point(100, 0, false), Some((0.6, 0.2)));
         assert_eq!(cropped.point(200, 200, false), Some((0.4, 0.4)));
+        let mut screenshot = Frame {
+            width: 20,
+            height: 10,
+            screenshot: true,
+            ..frame
+        };
+        let geometry =
+            Geometry::transformed(&screenshot, (400, 400), None, 0, (false, false), None);
+        assert_eq!(geometry.angle, 0);
+        assert_eq!(geometry.point(100, 250, false), Some((0.75, 0.75)));
+        screenshot.display["width"] = 11.into();
+        let inconsistent =
+            Geometry::transformed(&screenshot, (400, 400), None, 0, (false, false), None);
+        assert_eq!(inconsistent.point(100, 250, false), None);
     }
 
     #[test]
@@ -1674,6 +1841,7 @@ mod tests {
             angle: 90,
             panel: (100, 200),
             source: Rect::new(0, 0, 100, 200),
+            pixel_angle: Some(0),
             flip: (false, false),
         };
         let batch = [
