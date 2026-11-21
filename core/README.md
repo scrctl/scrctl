@@ -128,3 +128,14 @@ bindings. Link the macOS target to `libxdb_ffi.dylib` and make the matching
 shared XDB client available to the loader. The API matches the combined
 module's optional XDB interface. Build the regular RFB module without its
 `xdb` feature when using the standalone module.
+
+
+### Rust CLI discovery
+
+With `--features xdb`, the Rust launcher handles standalone `--list-devices`
+and its canonical decimal `--discovery-timeout` form through the XDB C ABI.
+Mixed options and invalid arguments use the legacy parser. The standard
+feature-free launcher also uses the legacy parser. Run
+`python3 core/tests/discovery_parity.py LEGACY RUST_LAUNCHER` with an initialized
+XDB submodule and a loader path to the shared XDB client to compare discovery
+output and exit status without contacting a device.
