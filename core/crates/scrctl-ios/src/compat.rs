@@ -1,5 +1,7 @@
 #[path = "desktop.rs"]
 mod desktop;
+#[cfg(feature = "sdl2")]
+mod sdl_frontend;
 
 use std::{env, error::Error, ffi::OsString, io, path::PathBuf, process::Command};
 
@@ -37,6 +39,10 @@ fn launch() -> Result<i32, Box<dyn Error>> {
             #[cfg(feature = "xdb")]
             if let Some(timeout) = discovery_timeout(&args) {
                 return Ok(list_devices(timeout));
+            }
+            #[cfg(feature = "sdl2")]
+            if let Some(result) = sdl_frontend::run_if_supported(&args) {
+                return result.map(|()| 0);
             }
             launch_legacy(args.into_iter())
                 .map_err(|error| format!("could not launch the C++ frontend: {error}").into())

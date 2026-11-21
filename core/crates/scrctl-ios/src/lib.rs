@@ -148,6 +148,8 @@ pub struct Frame {
 pub struct Session {
     client: Client,
     open: bool,
+    port: u16,
+    attachment: Option<String>,
 }
 
 impl Session {
@@ -157,12 +159,30 @@ impl Session {
         transport: &str,
         hardware_decode: bool,
     ) -> Result<Self, Error> {
+        Self::open_target(port, udid, transport, "", 49152, hardware_decode)
+    }
+
+    pub fn open_target(
+        port: u16,
+        udid: &str,
+        transport: &str,
+        wifi: &str,
+        wifi_port: u16,
+        hardware_decode: bool,
+    ) -> Result<Self, Error> {
         let mut client = Client::connect(port)?;
-        client.request(
-            c"connection.open",
-            json!({"udid": udid, "transport": transport}),
-        )?;
-        let mut session = Self { client, open: true };
+        let mut params = json!({"udid": udid, "transport": transport});
+        if !wifi.is_empty() {
+            params["wifi"] = json!(wifi);
+            params["port"] = json!(wifi_port);
+        }
+        let (opened, _) = client.request(c"connection.open", params)?;
+        let mut session = Self {
+            client,
+            open: true,
+            port,
+            attachment: opened["attachment"].as_str().map(str::to_owned),
+        };
         session.client.request(
             c"video.start",
             json!({"decode": true, "hardware_decode": hardware_decode}),
@@ -240,5 +260,71 @@ impl Session {
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.close_connection();
+    }
+}
+
+pub struct AudioReader {
+    client: Client,
+    rate: i32,
+    channels: u8,
+}
+
+impl Session {
+    pub fn start_audio(&mut self, duplicate: bool, buffer_ms: u32) -> Result<AudioReader, Error> {
+        let attachment = self
+            .attachment
+            .as_deref()
+            .ok_or_else(|| Error::Client("Missing XDB session attachment".into()))?;
+        let mut client = Client::connect(self.port)?;
+        client.request(c"connection.attach", json!({"attachment": attachment}))?;
+        let (info, _) = self.client.request(
+            c"audio.start",
+            json!({"decode": true, "duplicate": duplicate, "buffer_ms": buffer_ms}),
+        )?;
+        let rate = info["sample_rate"]
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .filter(|n| *n > 0);
+        let channels = info["channels"]
+            .as_u64()
+            .and_then(|n| u8::try_from(n).ok())
+            .filter(|n| *n > 0);
+        match (rate, channels) {
+            (Some(rate), Some(channels)) => Ok(AudioReader {
+                client,
+                rate,
+                channels,
+            }),
+            _ => {
+                let _ = self.stop_audio();
+                Err(Error::Client("Invalid XDB audio format".into()))
+            }
+        }
+    }
+
+    pub fn stop_audio(&mut self) -> Result<(), Error> {
+        self.client.request(c"audio.stop", json!({})).map(|_| ())
+    }
+}
+
+impl AudioReader {
+    pub fn format(&self) -> (i32, u8) {
+        (self.rate, self.channels)
+    }
+
+    pub fn read(&mut self, frames: u32) -> Result<Vec<i16>, Error> {
+        let (info, bytes) = self
+            .client
+            .request(c"audio.read", json!({"frames": frames}))?;
+        let returned = info["frames"].as_u64().unwrap_or(u64::MAX);
+        if returned > u64::from(frames)
+            || returned * u64::from(self.channels) * 2 != bytes.len() as u64
+        {
+            return Err(Error::Client("Invalid XDB PCM frame count".into()));
+        }
+        Ok(bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect())
     }
 }
