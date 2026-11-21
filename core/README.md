@@ -227,3 +227,21 @@ The test creates an Annex-B sample with FFmpeg's executable and libx265.
 Normal Rust playback links the FFmpeg libraries directly.
 
 Set `SCRCTL_TEST_HW_DECODE=1` to include the macOS hardware playback checks.
+
+### Local macOS installation candidate
+
+Use a separate install prefix. The CMake package installs the Rust binary
+as `scrctl`, the C++ fallback as `scrctl-legacy`, and fixes and locally signs
+both executables with their bundled libraries.
+
+```sh
+cmake -S . -B build-candidate
+cmake --build build-candidate
+XDB_LIB_DIR="$PWD/build-candidate/xdb" cargo rustc --manifest-path core/Cargo.toml \
+  -p scrctl-cli --bin scrctl --release --features sdl3,ffmpeg-next --locked -- \
+  -C link-arg=-Wl,-headerpad_max_install_names \
+  -C "link-arg=-Wl,-rpath,$PWD/build-candidate/xdb"
+cmake -B build-candidate -DSCRCTL_RUST_FRONTEND="$PWD/core/target/release/scrctl"
+cmake --install build-candidate --prefix "$PWD/dist-candidate"
+python3 tools/test_macos_install.py dist-candidate build-candidate
+```

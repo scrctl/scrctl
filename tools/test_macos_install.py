@@ -52,13 +52,15 @@ def main():
             catalog.rename(hidden)
         try:
             executable = moved / "bin/scrctl"
+            legacy = executable.with_name("scrctl-legacy")
+            frontends = [executable, legacy] if legacy.is_file() else [executable]
             libraries = sorted((moved / "bin/lib").rglob("*.dylib"))
             if not libraries:
                 raise RuntimeError("Package has no bundled dylibs")
             host_macos = platform.mac_ver()[0]
             host_version = macos_version_tuple(host_macos)
             minimum_versions = {}
-            for binary in [executable, *libraries]:
+            for binary in [*frontends, *libraries]:
                 if not inside(binary, moved):
                     raise RuntimeError(f"Library symlink escapes package: {binary}")
                 # dyld 可能让高于当前系统的二进制先跑到 --help，仍不能据此
