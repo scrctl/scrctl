@@ -424,6 +424,48 @@ impl Session {
             .map(|_| ())
     }
 
+    pub fn type_text(&mut self, text: &str) -> Result<(), Error> {
+        self.client
+            .request(c"input.text", json!({"text": text, "hold_ms": 40}))
+            .map(|_| ())
+    }
+
+    pub fn enable_network_debug(&mut self) -> Result<(), Error> {
+        self.client
+            .request(c"network.debug", json!({"enabled": true}))
+            .map(|_| ())
+    }
+
+    pub fn launch_app(&mut self, spec: &str) -> Result<(), Error> {
+        let name = spec.trim_start_matches(['?', '+']);
+        let flags = &spec[..spec.len() - name.len()];
+        let bundle = if flags.contains('?') {
+            let (apps, _) = self.client.request(c"app.list", json!({}))?;
+            let prefix = name.to_ascii_lowercase();
+            apps.as_array()
+                .into_iter()
+                .flatten()
+                .find(|app| {
+                    app["name"]
+                        .as_str()
+                        .is_some_and(|label| label.to_ascii_lowercase().starts_with(&prefix))
+                })
+                .and_then(|app| app["bundle_id"].as_str())
+                .map(str::to_owned)
+                .ok_or_else(|| Error::Client(format!("No app name starts with {name}")))?
+        } else {
+            name.to_owned()
+        };
+        self.client
+            .request(
+                c"app.launch",
+                json!({
+                    "bundle_id": bundle, "terminate_existing": flags.contains('+')
+                }),
+            )
+            .map(|_| ())
+    }
+
     pub fn prepare_clipboard(
         &self,
         text: String,

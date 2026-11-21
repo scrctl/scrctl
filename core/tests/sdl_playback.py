@@ -5,6 +5,7 @@ import subprocess
 import sys
 import signal
 import time
+from tempfile import TemporaryDirectory
 
 root = Path(__file__).resolve().parents[2]
 fixture = Path(os.getenv("SCRCTL_TEST_XDB", root / "xdb"))
@@ -56,6 +57,37 @@ for extra in (["--video-source", "screenshot"], ["--test-degrade", "0,0.15"]):
         else:
             assert "video.start" not in peer.methods() and "video.frame" not in peer.methods()
 print("PASS explicit screenshots and forced degradation followed by video recovery")
+
+
+with FakeServer() as peer, TemporaryDirectory() as directory:
+    env = dict(os.environ, **peer.environment, SDL_VIDEO_DRIVER="dummy",
+               SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+    readback = Path(directory) / "window.bmp"
+    result = subprocess.run(
+        [sys.argv[1], "--exit-after", "5", "--no-audio", "--debug-net",
+         "--start-app", "+?test app", "--test-button", "home", "--test-type", "abc",
+         "--verify", "3", str(readback)],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0 and readback.read_bytes().startswith(b"BM"), result
+    assert ("network.debug", {"enabled": True}) in peer.calls
+    assert ("app.launch", {"bundle_id": "test.bundle", "terminate_existing": True}) in peer.calls
+    assert ("input.text", {"text": "abc", "hold_ms": 40}) in peer.calls
+    assert [p["down"] for method, p in peer.calls if method == "input.button"] == [True, False]
+    assert peer.methods()[-1] == "connection.close"
+
+with FakeServer() as peer:
+    env = dict(os.environ, **peer.environment, SCRCTL_LEGACY_EXECUTABLE="/nonexistent")
+    result = subprocess.run(
+        [sys.argv[1], "--no-window", "--no-audio", "--test-touch", "0.1,0.2,0.3,0.4"],
+        env=env, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result
+    touches = [p for method, p in peer.calls if method == "input.touch"]
+    assert len(touches) == 21 and all(p["down"] for p in touches[:-1])
+    assert (touches[-1]["x"], touches[-1]["y"], touches[-1]["down"]) == (0.3, 0.4, False)
+    assert "video.start" not in peer.methods() and peer.methods()[-1] == "connection.close"
+print("PASS startup controls, network debug, swipe and window readback")
 
 
 for extra in (["--audio-dup", "--audio-buffer", "200"], ["--no-audio", "--no-control"], ["--no-audio-playback"]):

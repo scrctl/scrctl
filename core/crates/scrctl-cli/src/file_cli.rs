@@ -20,6 +20,8 @@ struct Options {
     play: PathBuf,
     #[arg(long)]
     no_window: bool,
+    #[command(flatten)]
+    diagnostics: crate::diagnostics::Diagnostics,
     #[arg(long, conflicts_with = "no_hw_decode")]
     hw_decode: bool,
     #[arg(long)]
@@ -36,6 +38,11 @@ pub fn run_if_supported(args: &[OsString]) -> Option<i32> {
     )
     .ok()?;
     if options.play.as_os_str().is_empty() || options.play.to_str().is_none() {
+        return None;
+    }
+    if options.diagnostics.has_verify()
+        && (options.no_window || options.diagnostics.verify_at().is_none())
+    {
         return None;
     }
     Some(match run(options) {
@@ -101,10 +108,12 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let mut source_format = None;
     let start = Instant::now();
     let mut count = 0;
+    let mut stats = options.diagnostics.counter();
     let mut eof = false;
     let mut source_ended = false;
 
     'playback: loop {
+        stats.report(count, None);
         if events.poll_iter().any(|event| {
             matches!(
                 event,
@@ -188,6 +197,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 None,
                 FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h),
             )?;
+            options.diagnostics.save(canvas, count + 1)?;
             canvas.present();
         }
         count += 1;
@@ -203,6 +213,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     if count == 0 {
         return Err("Playback file produced no video frames".into());
     }
+    options.diagnostics.finish(count)?;
     if source_ended {
         println!("Source ended");
     }

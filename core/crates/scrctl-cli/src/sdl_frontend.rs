@@ -3,6 +3,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
+use crate::diagnostics::Diagnostics;
 use clap::{CommandFactory, FromArgMatches, Parser};
 use scrctl_ios::{AudioReader, Frame, Session, VideoOptions, VideoRecording};
 use sdl3::audio::{AudioFormat, AudioSpec, AudioStreamOwner};
@@ -30,6 +31,20 @@ struct Options {
     audio_dup: bool,
     #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(..=1000))]
     audio_buffer: u32,
+    #[command(flatten)]
+    diagnostics: Diagnostics,
+    #[arg(long)]
+    debug_input: bool,
+    #[arg(long)]
+    debug_net: bool,
+    #[arg(long, conflicts_with = "no_control")]
+    start_app: Option<String>,
+    #[arg(long, conflicts_with = "no_control", num_args = 1..=4, value_delimiter = ',', value_parser = parse_touch_coordinate)]
+    test_touch: Vec<f64>,
+    #[arg(long, conflicts_with = "no_control", value_parser = parse_test_button)]
+    test_button: Option<TestButton>,
+    #[arg(long, conflicts_with = "no_control")]
+    test_type: Option<String>,
     #[arg(short = 'n', long)]
     no_control: bool,
     #[arg(long, default_value = "lalt,lsuper", value_parser = parse_shortcut_mod)]
@@ -364,6 +379,35 @@ impl<'a> FrameSource<'a> {
     }
 }
 
+fn parse_touch_coordinate(value: &str) -> Result<f64, &'static str> {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| (0.0..=1.0).contains(value))
+        .ok_or("Coordinates must be finite numbers in [0, 1]")
+}
+
+#[derive(Clone)]
+struct TestButton {
+    name: String,
+    usage: u16,
+}
+
+fn parse_test_button(name: &str) -> Result<TestButton, &'static str> {
+    let usage = match name {
+        "home" => 0x40,
+        "lock" => 0x30,
+        "volup" => 0xe9,
+        "voldn" => 0xea,
+        "mute" => 0xe2,
+        _ => return Err("Unknown button"),
+    };
+    Ok(TestButton {
+        name: name.to_owned(),
+        usage,
+    })
+}
+
 fn parse_bit_rate(value: &str) -> Result<u64, &'static str> {
     let (digits, multiplier) = match value.as_bytes().last() {
         Some(b'K' | b'k') => (&value[..value.len() - 1], 1_000),
@@ -417,6 +461,9 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         .try_get_matches_from(std::iter::once(OsString::from("scrctl")).chain(args.iter().cloned()))
         .ok()?;
     let mut options = Options::from_arg_matches(&matches).ok()?;
+    if !options.test_touch.is_empty() && options.test_touch.len() != 4 {
+        return None;
+    }
     if options.no_playback {
         options.no_video_playback = true;
         options.no_audio_playback = true;
@@ -452,6 +499,31 @@ pub fn run_if_supported(args: &[OsString]) -> Option<Result<(), Box<dyn Error>>>
         options.no_video = true;
     }
     if (options.no_video && options.exit_after > 0) || (options.audio_dup && options.no_audio) {
+        return None;
+    }
+    let startup_control = options
+        .start_app
+        .as_ref()
+        .is_some_and(|app| !app.is_empty())
+        || !options.test_touch.is_empty()
+        || options.test_button.is_some()
+        || options
+            .test_type
+            .as_ref()
+            .is_some_and(|text| !text.is_empty());
+    if (options.no_video
+        && options.no_audio
+        && (options.no_control || (options.no_window && !startup_control)))
+        || (options.diagnostics.has_verify()
+            && (options.diagnostics.verify_at().is_none()
+                || options.no_window
+                || options.no_video
+                || options.no_video_playback))
+        || options
+            .start_app
+            .as_ref()
+            .is_some_and(|app| !app.is_empty() && app.trim_start_matches(['?', '+']).is_empty())
+    {
         return None;
     }
     let screenshots = options.video_source.as_deref() == Some("screenshot");
@@ -778,6 +850,7 @@ impl Drop for PendingPaste {
 
 struct Input {
     shortcut_mods: Mod,
+    debug: bool,
     keys: BTreeSet<u16>,
     touch: Option<(f64, f64)>,
     fingers: BTreeMap<(u64, u64), (u8, f64, f64)>,
@@ -791,6 +864,7 @@ impl Default for Input {
     fn default() -> Self {
         Self {
             shortcut_mods: Mod::LALTMOD | Mod::LGUIMOD,
+            debug: false,
             keys: BTreeSet::new(),
             fingers: BTreeMap::new(),
             buttons: BTreeMap::new(),
@@ -894,6 +968,20 @@ impl Input {
     ) -> Result<(), scrctl_ios::Error> {
         if !enabled {
             return Ok(());
+        }
+        if self.debug {
+            match &event {
+                Event::MouseButtonDown { x, y, .. }
+                | Event::MouseButtonUp { x, y, .. }
+                | Event::MouseMotion { x, y, .. } => {
+                    if let Some((u, v)) =
+                        geometry.point(x.floor() as i32, y.floor() as i32, self.touch.is_some())
+                    {
+                        println!("Input: window ({x:.1}, {y:.1}) -> device ({u:.4}, {v:.4})");
+                    }
+                }
+                _ => {}
+            }
         }
         match event {
             Event::Window {
@@ -1223,6 +1311,42 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     } else {
         None
     };
+    if config.debug_net
+        && let Err(error) = session.enable_network_debug()
+    {
+        eprintln!("{error}");
+    }
+    if let Some(app) = config.start_app.as_deref().filter(|app| !app.is_empty()) {
+        session.launch_app(app)?;
+    }
+    if let &[x0, y0, x1, y1] = config.test_touch.as_slice() {
+        for step in 0..=20 {
+            let t = f64::from(step) / 20.0;
+            let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+            if let Err(error) = session.touch_contact(0, x, y, step < 20) {
+                let _ = session.touch_contact(0, x, y, false);
+                return Err(error.into());
+            }
+            if step < 20 {
+                std::thread::sleep(Duration::from_millis(12));
+            }
+        }
+        println!("--test-touch ({x0:.3},{y0:.3})->({x1:.3},{y1:.3}): injected");
+        if config.record.is_some() {
+            session.finish_media()?;
+        }
+        return Ok(session.close()?);
+    }
+    if let Some(button) = &config.test_button {
+        session.button(button.usage, true)?;
+        std::thread::sleep(Duration::from_millis(90));
+        session.button(button.usage, false)?;
+        println!("--test-button {}: pressed", button.name);
+    }
+    if let Some(text) = config.test_type.as_deref().filter(|text| !text.is_empty()) {
+        session.type_text(text)?;
+        println!("--test-type {text}: injected");
+    }
     if config.no_audio_playback && recording.is_some_and(|recording| recording.audio) {
         session.start_recording_audio(config.audio_dup, config.audio_buffer)?;
         println!("Local audio playback disabled; recording original AAC without PCM decoding");
@@ -1247,7 +1371,11 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     if config.fullscreen {
         window.set_fullscreen(true)?;
     }
-    let mut canvas = config.window.canvas(window)?;
+    let mut canvas = if config.diagnostics.has_verify() {
+        sdl3::render::create_renderer(window, Some(c"software"))?
+    } else {
+        config.window.canvas(window)?
+    };
     let creator = canvas.texture_creator();
     let mut texture =
         creator.create_texture_streaming(PixelFormat::BGRA32, frame.width, frame.height)?;
@@ -1255,6 +1383,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     let mut playback = start_playback(&sdl, &mut session, &config)?;
     let mut input = Input {
         shortcut_mods: config.shortcut_mod,
+        debug: config.debug_input,
         ..Input::default()
     };
     let mut geometry = Geometry::transformed(
@@ -1270,6 +1399,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     let mut paused = false;
     let mut refresh = false;
     let mut paste: Option<PendingPaste> = None;
+    let mut stats = config.diagnostics.counter();
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let mut count = 0;
         let mut presented_serial = None;
@@ -1331,6 +1461,9 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 geometry.flip.0,
                 geometry.flip.1,
             )?;
+            if presented_serial != Some(frame.serial) {
+                config.diagnostics.save(&canvas, count + 1)?;
+            }
             canvas.present();
             if presented_serial != Some(frame.serial) {
                 count += 1;
@@ -1341,6 +1474,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 }
             }
             loop {
+                stats.report(count, Some(source.sequence));
                 if reached_time_limit(start, config.time_limit) {
                     break 'running;
                 }
@@ -1470,6 +1604,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     let count = result?;
     finish?;
     close?;
+    config.diagnostics.finish(count)?;
     println!("Finished: processed {count} frames");
     Ok(())
 }
@@ -1576,6 +1711,7 @@ fn run_headless(
     };
     let mut input = Input {
         shortcut_mods: config.shortcut_mod,
+        debug: config.debug_input,
         ..Input::default()
     };
     let mut paste = None;
@@ -1594,6 +1730,7 @@ fn run_headless(
             return Err(error);
         }
     };
+    let mut stats = config.diagnostics.counter();
     let result = (|| -> Result<u64, Box<dyn Error>> {
         let decode_video = first_frame.is_some();
         let mut count = u64::from(decode_video);
@@ -1601,6 +1738,7 @@ fn run_headless(
         let start = Instant::now();
         let mut next_status = start;
         loop {
+            stats.report(count, Some(source.sequence));
             if reached_time_limit(start, config.time_limit) {
                 break;
             }

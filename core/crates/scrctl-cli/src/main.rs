@@ -2,6 +2,8 @@
 mod desktop;
 #[cfg(feature = "xdb")]
 mod device_cli;
+#[cfg(feature = "sdl3")]
+mod diagnostics;
 #[cfg(all(feature = "sdl3", feature = "ffmpeg-next"))]
 mod file_cli;
 #[cfg(feature = "sdl3")]
