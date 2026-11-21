@@ -5,12 +5,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::sdl_frontend::{
+    DisplayOrientation, Geometry, initial_window_size, parse_crop, parse_display_orientation,
+    parse_scale,
+};
 use clap::Parser;
 use ffmpeg_next as av;
 use sdl3::{
     event::{Event, WindowEvent},
     pixels::PixelFormat,
-    render::FRect,
 };
 
 #[derive(Parser)]
@@ -28,6 +31,22 @@ struct Options {
     no_hw_decode: bool,
     #[command(flatten)]
     window: crate::sdl_frontend::WindowOptions,
+    #[arg(short = 'f', long)]
+    fullscreen: bool,
+    #[arg(long)]
+    window_borderless: bool,
+    #[arg(long, default_value_t = 0)]
+    window_width: u32,
+    #[arg(long, default_value_t = 0)]
+    window_height: u32,
+    #[arg(long, value_parser = parse_scale)]
+    scale: Option<f64>,
+    #[arg(long, value_parser = parse_crop)]
+    crop: Option<[u32; 4]>,
+    #[arg(long, visible_alias = "orientation", value_parser = parse_display_orientation)]
+    display_orientation: Option<DisplayOrientation>,
+    #[arg(long, default_value_t = 0)]
+    time_limit: u64,
     #[arg(long, default_value_t = 0)]
     exit_after: u64,
 }
@@ -97,12 +116,15 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let sdl = sdl3::init()?;
     options.window.keep_screen_awake(&sdl)?;
     let mut events = sdl.event_pump()?;
-    let mut canvas = if options.no_window {
+    let video = if options.no_window {
         None
     } else {
-        Some(options.window.open(&sdl.video()?, 840, 540)?)
+        Some(sdl.video()?)
     };
-    let creator = canvas.as_ref().map(|canvas| canvas.texture_creator());
+    let orientation = options.display_orientation.unwrap_or_default();
+    // Delay window creation until the first frame supplies the coded size.
+    let mut canvas = None;
+    let creator = std::cell::OnceCell::new();
     let mut texture = None;
     let mut scaler = None;
     let mut source_format = None;
@@ -114,6 +136,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 
     'playback: loop {
         stats.report(count, None);
+        if options.time_limit > 0 && start.elapsed() >= Duration::from_secs(options.time_limit) {
+            println!("Reached --time-limit {} seconds", options.time_limit);
+            break;
+        }
         if events.poll_iter().any(|event| {
             matches!(
                 event,
@@ -154,7 +180,49 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         if hardware && frame.format() != av::format::Pixel::VIDEOTOOLBOX {
             return Err("VideoToolbox did not return a hardware frame".into());
         }
-        if let (Some(canvas), Some(creator)) = (&mut canvas, &creator) {
+        let geometry_frame = xdb_engine::Frame {
+            serial: count + 1,
+            width: frame.width(),
+            height: frame.height(),
+            row_pitch: 0,
+            display: serde_json::Value::Null,
+            screenshot: false,
+            pixels: Vec::new(),
+        };
+        if let Some(video) = &video
+            && canvas.is_none()
+        {
+            let layout = Geometry::transformed(
+                &geometry_frame,
+                (1, 1),
+                orientation.angle,
+                0,
+                (orientation.flip, false),
+                options.crop,
+            );
+            let (width, height) = initial_window_size(
+                video,
+                layout.view_size(),
+                (options.window_width, options.window_height),
+                options.scale,
+            )?;
+            let mut builder = options.window.builder(video, width, height);
+            if options.window_borderless {
+                builder.borderless();
+            }
+            let mut window = builder.build()?;
+            if options.fullscreen {
+                window.set_fullscreen(true)?;
+            }
+            let window_canvas = if options.diagnostics.has_verify() {
+                sdl3::render::create_renderer(window, Some(c"software"))?
+            } else {
+                options.window.canvas(window)?
+            };
+            let _ = creator.set(window_canvas.texture_creator());
+            canvas = Some(window_canvas);
+        }
+        if let (Some(canvas), Some(creator)) = (&mut canvas, creator.get()) {
             if hardware {
                 let mut software = av::frame::Video::empty();
                 // Transfer the hardware surface while the input frame is alive.
@@ -187,16 +255,17 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             let texture = texture.as_mut().unwrap();
             texture.update(None, bgra.data(0), bgra.stride(0))?;
 
-            let (out_w, out_h) = canvas.output_size()?;
-            let scale = (out_w as f32 / width as f32).min(out_h as f32 / height as f32);
-            let (w, h) = (width as f32 * scale, height as f32 * scale);
+            let layout = Geometry::transformed(
+                &geometry_frame,
+                canvas.window().size(),
+                orientation.angle,
+                0,
+                (orientation.flip, false),
+                options.crop,
+            );
             canvas.set_draw_color(options.window.background_color);
             canvas.clear();
-            canvas.copy(
-                texture,
-                None,
-                FRect::new((out_w as f32 - w) / 2.0, (out_h as f32 - h) / 2.0, w, h),
-            )?;
+            layout.render(canvas, texture)?;
             options.diagnostics.save(canvas, count + 1)?;
             canvas.present();
         }

@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 from tempfile import TemporaryDirectory
 
@@ -36,6 +37,24 @@ with TemporaryDirectory() as directory:
     )
     assert windowed.returncode == 0 and b"processed 3 frames" in windowed.stdout, windowed
     print("PASS SDL3 dummy window playback")
+
+    window_options = [
+        "--play", str(clip), "--crop", "64:32:4:8", "--display-orientation", "flip90",
+        "--window-borderless", "--window-width", "90", "--window-height", "100",
+        "--background-color", "#123", "--exit-after", "3",
+    ]
+    for frontend in (legacy, rust):
+        bmp = root / ("readback-" + ("rust" if frontend == rust else "legacy") + ".bmp")
+        result = subprocess.run(
+            [frontend, *window_options, "--verify", "2", str(bmp)],
+            env=dict(env, SDL_VIDEODRIVER="dummy"), capture_output=True, timeout=10,
+        )
+        assert result.returncode == 0 and b"processed 3 frames" in result.stdout, result
+        data = bmp.read_bytes()
+        assert data.startswith(b"BM") and struct.unpack_from("<ii", data, 18) == (90, 100)
+        offset = struct.unpack_from("<I", data, 10)[0]
+        assert data[offset:offset + 3] == bytes.fromhex("332211")
+    print("PASS cropped and rotated file playback honors window size and background")
 
     if sys.platform == "darwin" and os.getenv("SCRCTL_TEST_HW_DECODE") == "1":
         args = ["--no-window", "--play", str(clip), "--hw-decode"]

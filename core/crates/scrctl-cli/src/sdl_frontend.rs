@@ -202,7 +202,7 @@ impl WindowOptions {
         Ok(())
     }
 
-    fn builder(
+    pub(crate) fn builder(
         &self,
         video: &sdl3::VideoSubsystem,
         width: u32,
@@ -222,7 +222,7 @@ impl WindowOptions {
         builder
     }
 
-    fn canvas(
+    pub(crate) fn canvas(
         &self,
         window: sdl3::video::Window,
     ) -> Result<sdl3::render::WindowCanvas, Box<dyn Error>> {
@@ -234,24 +234,15 @@ impl WindowOptions {
             .transpose()?;
         Ok(sdl3::render::create_renderer(window, driver.as_deref())?)
     }
-
-    pub(crate) fn open(
-        &self,
-        video: &sdl3::VideoSubsystem,
-        width: u32,
-        height: u32,
-    ) -> Result<sdl3::render::WindowCanvas, Box<dyn Error>> {
-        self.canvas(self.builder(video, width, height).build()?)
-    }
 }
 
 #[derive(Clone, Copy, Default)]
-struct DisplayOrientation {
-    angle: Option<i32>,
-    flip: bool,
+pub(crate) struct DisplayOrientation {
+    pub(crate) angle: Option<i32>,
+    pub(crate) flip: bool,
 }
 
-fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
+pub(crate) fn parse_display_orientation(value: &str) -> Result<DisplayOrientation, &'static str> {
     if value == "auto" {
         return Ok(DisplayOrientation::default());
     }
@@ -314,7 +305,7 @@ impl Orientations {
     }
 }
 
-fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
+pub(crate) fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
     let invalid = "Expected WxH+X+Y or W:H:X:Y";
     let parts = if let Some((width, rest)) = value.split_once('x') {
         let (height, offsets) = rest.split_once('+').ok_or(invalid)?;
@@ -339,7 +330,7 @@ fn parse_crop(value: &str) -> Result<[u32; 4], &'static str> {
     Ok(crop)
 }
 
-fn parse_scale(value: &str) -> Result<f64, &'static str> {
+pub(crate) fn parse_scale(value: &str) -> Result<f64, &'static str> {
     value
         .parse::<f64>()
         .ok()
@@ -792,17 +783,17 @@ impl Playback {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-struct Geometry {
+pub(crate) struct Geometry {
     flip: (bool, bool),
     area: Rect,
-    angle: i32,
+    pub(crate) angle: i32,
     panel: (u32, u32),
-    source: Rect,
+    pub(crate) source: Rect,
     pixel_angle: Option<i32>,
 }
 
 impl Geometry {
-    fn transformed(
+    pub(crate) fn transformed(
         frame: &Frame,
         (window_w, window_h): (u32, u32),
         orientation: Option<i32>,
@@ -897,13 +888,49 @@ impl Geometry {
         }
     }
 
-    fn view_size(self) -> (u32, u32) {
+    pub(crate) fn view_size(self) -> (u32, u32) {
         let (w, h) = (self.source.width(), self.source.height());
         if self.angle % 180 == 0 {
             (w, h)
         } else {
             (h, w)
         }
+    }
+
+    pub(crate) fn render(
+        self,
+        canvas: &mut sdl3::render::WindowCanvas,
+        texture: &sdl3::render::Texture<'_>,
+    ) -> Result<(), Box<dyn Error>> {
+        let (w, h) = (self.area.width(), self.area.height());
+        let (w, h) = if self.angle % 180 == 0 {
+            (w, h)
+        } else {
+            (h, w)
+        };
+        let dst = Rect::from_center(self.area.center(), w, h);
+        let (w, h) = canvas.window().size();
+        canvas.set_logical_size(w, h, SDL_LOGICAL_PRESENTATION_STRETCH)?;
+        canvas.copy_ex(
+            texture,
+            FRect::new(
+                self.source.x() as f32,
+                self.source.y() as f32,
+                self.source.width() as f32,
+                self.source.height() as f32,
+            ),
+            FRect::new(
+                dst.x() as f32,
+                dst.y() as f32,
+                dst.width() as f32,
+                dst.height() as f32,
+            ),
+            f64::from(self.angle),
+            None,
+            self.flip.0,
+            self.flip.1,
+        )?;
+        Ok(())
     }
 
     fn point(self, x: i32, y: i32, dragging: bool) -> Option<(f64, f64)> {
@@ -1418,19 +1445,17 @@ fn recording_container(path: &str, explicit: Option<&str>) -> Option<&'static st
     }
 }
 
-fn initial_window_size(
+pub(crate) fn initial_window_size(
     video: &sdl3::VideoSubsystem,
     view: (u32, u32),
-    config: &Options,
+    (requested_w, requested_h): (u32, u32),
+    scale: Option<f64>,
 ) -> Result<(u32, u32), &'static str> {
     let (w, h) = (f64::from(view.0), f64::from(view.1));
-    let (width, height) = (
-        f64::from(config.window_width),
-        f64::from(config.window_height),
-    );
-    let (width, height) = match (config.window_width, config.window_height) {
+    let (width, height) = (f64::from(requested_w), f64::from(requested_h));
+    let (width, height) = match (requested_w, requested_h) {
         (0, 0) => {
-            let scale = config.scale.unwrap_or_else(|| {
+            let scale = scale.unwrap_or_else(|| {
                 let bounds = video
                     .get_primary_display()
                     .and_then(|display| display.get_bounds());
@@ -1568,7 +1593,12 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
     let orientation = orientations.display;
     let mut flip = (orientation.flip, false);
     let initial = Geometry::transformed(&frame, (1, 1), orientation.angle, 0, flip, config.crop);
-    let (width, height) = initial_window_size(&video, initial.view_size(), &config)?;
+    let (width, height) = initial_window_size(
+        &video,
+        initial.view_size(),
+        (config.window_width, config.window_height),
+        config.scale,
+    )?;
     let mut builder = config.window.builder(&video, width, height);
     if config.window_borderless {
         builder.borderless();
@@ -1634,39 +1664,9 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
                 geometry = new_geometry;
             }
             texture.update(None, &frame.pixels, frame.row_pitch as usize)?;
-            let (w, h) = (geometry.area.width(), geometry.area.height());
-            let (w, h) = if geometry.angle % 180 == 0 {
-                (w, h)
-            } else {
-                (h, w)
-            };
-            let dst = Rect::from_center(geometry.area.center(), w, h);
-            canvas.set_logical_size(
-                canvas.window().size().0,
-                canvas.window().size().1,
-                SDL_LOGICAL_PRESENTATION_STRETCH,
-            )?;
             canvas.set_draw_color(config.window.background_color);
             canvas.clear();
-            canvas.copy_ex(
-                &texture,
-                FRect::new(
-                    geometry.source.x() as f32,
-                    geometry.source.y() as f32,
-                    geometry.source.width() as f32,
-                    geometry.source.height() as f32,
-                ),
-                FRect::new(
-                    dst.x() as f32,
-                    dst.y() as f32,
-                    dst.width() as f32,
-                    dst.height() as f32,
-                ),
-                f64::from(geometry.angle),
-                None,
-                geometry.flip.0,
-                geometry.flip.1,
-            )?;
+            geometry.render(&mut canvas, &texture)?;
             if presented_serial != Some(frame.serial) {
                 config.diagnostics.save(&canvas, count + 1)?;
             }
