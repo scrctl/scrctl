@@ -55,7 +55,7 @@ class SourcePackageTest(unittest.TestCase):
         (runtime / 'source-manifest.json').write_text(json.dumps(manifest))
         embedded = self.materials / 'embedded'
         dependencies = []
-        for name in ('nlohmann_json', 'cli11', 'xdb'):
+        for name in ('nlohmann_json', 'xdb'):
             (embedded / (name + '.tar')).write_bytes(b'controlled embedded source')
             (embedded / (name + '.json')).write_text('[]')
             dependencies.append({'name': name, 'source_material_complete': True,
@@ -126,6 +126,14 @@ class SourcePackageTest(unittest.TestCase):
     def test_changed_installed_library_rejected(self):
         (self.install / 'bin/test.dll').write_bytes(b'changed after collection')
         with self.assertRaisesRegex(RuntimeError, 'runtime library changed'):
+            self.run_package()
+
+    def test_missing_embedded_dependency_rejected(self):
+        path = self.materials / 'embedded/source-manifest.json'
+        manifest = json.loads(path.read_text())
+        manifest['dependencies'] = [item for item in manifest['dependencies'] if item['name'] != 'xdb']
+        path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(RuntimeError, 'Embedded dependency coverage incomplete: xdb'):
             self.run_package()
 
     def test_missing_embedded_source_rejected(self):
