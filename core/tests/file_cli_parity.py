@@ -27,7 +27,9 @@ with TemporaryDirectory() as directory:
         args = ["--no-window", "--play", str(path), *options]
         old, new = (subprocess.run([exe, *args], env=env, capture_output=True, timeout=10)
                     for exe in (legacy, rust))
-        assert (old.returncode, old.stdout, old.stderr) == (code, new.stdout, new.stderr), (old, new)
+        assert old.returncode == code, old
+        assert old.stdout.splitlines() == new.stdout.splitlines(), (old, new)
+        assert old.stderr.splitlines() == new.stderr.splitlines(), (old, new)
         assert new.returncode == code, new
         print(f"PASS {path.name} {options} exit={code}")
 

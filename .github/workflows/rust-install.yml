@@ -80,7 +80,7 @@ jobs:
             ${{ matrix.prefix }}-clang
             ${{ matrix.prefix }}-cmake
             ${{ matrix.prefix }}-ninja
-            ${{ matrix.machine == 'AMD64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
+            ${{ matrix.machine == 'AMD64' && 'mingw-w64-clang-x86_64-nasm mingw-w64-clang-x86_64-clang22' || '' }}
             ${{ matrix.prefix }}-rust
             ${{ matrix.prefix }}-gettext-tools
             ${{ matrix.prefix }}-sdl3
@@ -93,6 +93,12 @@ jobs:
         run: |
           set -euo pipefail
           export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
+          if [[ "${{ matrix.machine }}" == AMD64 ]]; then
+            # Clang 23's x86 AMX headers produce invalid packed/aligned Rust bindings.
+            bindgen_bin="$(cygpath -aw "$MINGW_PREFIX/opt/llvm22/bin")"
+            export LIBCLANG_PATH="$bindgen_bin"
+            export CLANG_PATH="$bindgen_bin/clang.exe"
+          fi
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build build --parallel 4
