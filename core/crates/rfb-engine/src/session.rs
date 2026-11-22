@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 
 use crate::apple_displays;
 use crate::apple_download::{DownloadEvent as AppleDownloadEvent, DownloadTransfer};
-use crate::apple_file_transfer::{self, RemoteFile};
+use crate::apple_file_transfer::{self, MAX_TRANSFER_PAYLOAD, RemoteFile};
 use crate::apple_input;
 use crate::handshake::{self, ClientConfig, HandshakeError};
 use crate::quality::AdaptiveQuality;
@@ -1433,7 +1433,6 @@ where
     Ok(message_type == 0)
 }
 
-const MAX_TRANSFER_PAYLOAD: usize = 8 * 1024 * 1024;
 const APPLE_DISPLAY_RECORD_LEN: usize = 28;
 
 async fn handle_upload_request<R>(
@@ -1497,14 +1496,14 @@ where
     fill_buffer(read, &mut state.buffer, chunk_len).await?;
     message.extend_from_slice(&state.buffer[..chunk_len]);
     state.buffer.advance(chunk_len);
-    let (info, _) = apple_file_transfer::parse_drag_info(&message)
-        .map_err(|_| SessionError::Protocol("invalid drag info"))?;
-    let files = apple_file_transfer::remote_files_from_pasteboard(&info.pasteboard);
+    // The complete notification has been consumed. If its pasteboard cannot
+    // be decoded, finish the drag without files and keep reading the session.
+    let handle = (&message[4..8]).get_u32();
+    let files = apple_file_transfer::parse_drag_info(&message)
+        .map(|(info, _)| apple_file_transfer::remote_files_from_pasteboard(&info.pasteboard))
+        .unwrap_or_default();
     events
-        .send(Event::DragOutInfo {
-            handle: info.handle,
-            files,
-        })
+        .send(Event::DragOutInfo { handle, files })
         .await
         .map_err(|_| SessionError::Closed)
 }

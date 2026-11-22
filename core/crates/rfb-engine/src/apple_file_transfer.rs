@@ -27,6 +27,8 @@ pub const SUBTYPE_COMPLETE: u16 = 0x0068;
 pub const SUBTYPE_PROGRESS: u16 = 0x00C8;
 pub const SUBTYPE_ACK: u16 = 0x012C;
 
+pub(crate) const MAX_TRANSFER_PAYLOAD: usize = 8 * 1024 * 1024;
+
 pub const MAX_DATA_CHUNK: usize = 64 * 1024;
 /// Seconds between the Unix and the 1904 (HFS) epochs.
 pub const EPOCH_1904_OFFSET: u64 = 2_082_844_800;
@@ -511,7 +513,10 @@ pub fn parse_drag_info(buf: &[u8]) -> Result<(DragInfo, usize), FileTransferErro
     if buf.len() < end {
         return Err(FileTransferError::Truncated);
     }
-    let pasteboard = inflate(&buf[16..end])?;
+    if raw_len > MAX_TRANSFER_PAYLOAD {
+        return Err(FileTransferError::BadLength);
+    }
+    let pasteboard = inflate(&buf[16..end], raw_len)?;
     if pasteboard.len() != raw_len {
         return Err(FileTransferError::BadLength);
     }
@@ -717,7 +722,7 @@ fn deflate(data: &[u8]) -> Vec<u8> {
     encoder.finish().unwrap_or_default()
 }
 
-fn inflate(data: &[u8]) -> Result<Vec<u8>, FileTransferError> {
+fn inflate(data: &[u8], expected_len: usize) -> Result<Vec<u8>, FileTransferError> {
     let body = if data.len() >= 2 && data[0] == 0x78 {
         &data[2..]
     } else {
@@ -725,6 +730,7 @@ fn inflate(data: &[u8]) -> Result<Vec<u8>, FileTransferError> {
     };
     let mut out = Vec::new();
     DeflateDecoder::new(body)
+        .take(expected_len as u64 + 1)
         .read_to_end(&mut out)
         .map_err(|_| FileTransferError::Compression)?;
     Ok(out)

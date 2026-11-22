@@ -580,6 +580,12 @@ async fn apple_file_transfer_events() {
     request.extend_from_slice(path.as_bytes());
     server.write_all(&request).await.unwrap();
 
+    // A drag whose metadata cannot be decoded still resolves the drag,
+    // and subsequent file-transfer and session events are delivered.
+    let mut incomplete_drag = ft::drag_in_message(7, &[]);
+    incomplete_drag[8..12].copy_from_slice(&0u32.to_be_bytes());
+    server.write_all(&incomplete_drag).await.unwrap();
+
     let urls = ["file:///Users/example/Desktop/a.txt"];
     server
         .write_all(&ft::drag_in_message(0x1242_fe7e, &urls))
@@ -605,6 +611,17 @@ async fn apple_file_transfer_events() {
         Event::UploadRequest {
             handle: 0x1242_fe7e,
             path: path.to_string()
+        }
+    );
+    let event = timeout(Duration::from_secs(1), session.next_event())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        event,
+        Event::DragOutInfo {
+            handle: 7,
+            files: Vec::new(),
         }
     );
     let event = timeout(Duration::from_secs(1), session.next_event())
