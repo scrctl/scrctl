@@ -30,6 +30,18 @@ impl AppleServerFeatures {
     pub fn has_clipboard_integration(&self) -> bool {
         self.feature_bits & (1 << 41) != 0
     }
+
+    // The Apple drag-in and drag-out handshakes in VNCKit check bits 29 and
+    // 31 in both directions, bit 33 for upload, and bit 49 for download.
+    pub fn supports_file_upload(&self) -> bool {
+        const REQUIRED: u64 = (1 << 29) | (1 << 31) | (1 << 33);
+        self.feature_bits & REQUIRED == REQUIRED
+    }
+
+    pub fn supports_file_download(&self) -> bool {
+        const REQUIRED: u64 = (1 << 29) | (1 << 31) | (1 << 49);
+        self.feature_bits & REQUIRED == REQUIRED
+    }
 }
 
 /// Framebuffer description sent by the server after authentication.

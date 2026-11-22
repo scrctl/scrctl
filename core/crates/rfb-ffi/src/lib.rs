@@ -782,6 +782,27 @@ impl RemoteSession {
         self.session.request_refresh().await.map_err(to_failure)
     }
 
+    /// Sets a fixed Tight JPEG quality (0 through 9) and refreshes the
+    /// current viewport. The server may ignore the quality hint.
+    pub async fn set_quality(&self, level: u8) -> Result<(), SessionFailure> {
+        self.session.set_quality(level).await.map_err(to_failure)
+    }
+
+    /// Reports whether the session negotiated Apple's RFB 3.889 variant.
+    pub fn is_apple_remote(&self) -> bool {
+        self.session.is_apple_remote()
+    }
+
+    /// Reports whether the Apple server advertised drag-in support.
+    pub fn supports_file_upload(&self) -> bool {
+        self.session.supports_file_upload()
+    }
+
+    /// Reports whether the Apple server advertised drag-out support.
+    pub fn supports_file_download(&self) -> bool {
+        self.session.supports_file_download()
+    }
+
     pub fn supports_curtain_mode(&self) -> bool {
         self.session.supports_curtain_mode()
     }
