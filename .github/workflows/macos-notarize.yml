@@ -41,16 +41,18 @@ jobs:
               raise SystemExit('Tag must match the CMake project version exactly')
           PYTAG
       - name: Install dependencies
-        run: brew install sdl2 ffmpeg pkg-config gettext
+        run: brew install sdl2 sdl3 ffmpeg pkg-config gettext
       - name: Build and test
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+          rustup update stable
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON \
             -DCMAKE_DISABLE_FIND_PACKAGE_CLI11=ON
           cmake --build build --parallel 3
           ctest --test-dir build --output-on-failure
           cmake --install build --prefix dist-macos
+          test ! -e dist-macos/bin/scrctl-legacy
       - name: Developer ID signing
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
