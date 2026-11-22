@@ -106,7 +106,7 @@ def package(install, build, materials, platform, repository):
     records = materials / 'build'
     records.mkdir(exist_ok=True)
     for name in ('package-metadata.json', 'runtime-origins.tsv', 'package-versions.txt',
-                 'ffmpeg-build.txt', 'source-commit.txt'):
+                 'source-commit.txt'):
         shutil.copy2(doc / name, records / name)
     shutil.copy2(build / 'CMakeCache.txt', records / 'CMakeCache.txt')
     shutil.copy2(build / 'compile_commands.json', records / 'compile_commands.json')

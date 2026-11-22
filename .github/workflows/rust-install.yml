@@ -84,6 +84,7 @@ jobs:
             ${{ matrix.prefix }}-cmake
             ${{ matrix.prefix }}-ninja
             ${{ matrix.prefix }}-rust
+            ${{ matrix.machine == 'AMD64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
             ${{ matrix.prefix }}-sdl3
             ${{ matrix.prefix }}-python
             ${{ matrix.prefix }}-pkgconf

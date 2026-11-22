@@ -35,7 +35,7 @@ class SourcePackageTest(unittest.TestCase):
         (self.install / 'bin/scrctl.exe').write_bytes(b'controlled executable')
         self.metadata = {'source_commit': self.commit, 'executable_sha256': module.sha256(self.install / 'bin/scrctl.exe'), 'runtime_dependencies': [{'library': 'test.dll', 'msys2_package': 'test', 'bundled_sha256': module.sha256(self.install / 'bin/test.dll')}], 'msys2_packages': {'test': {'version': '1.0-1'}}}
         self.write_metadata()
-        for name in ('runtime-origins.tsv', 'package-versions.txt', 'ffmpeg-build.txt', 'source-commit.txt'):
+        for name in ('runtime-origins.tsv', 'package-versions.txt', 'source-commit.txt'):
             (self.doc / name).write_text(name)
         self.build = self.root / 'build'
         self.build.mkdir()
