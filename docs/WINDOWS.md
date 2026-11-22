@@ -3,7 +3,7 @@
 目前已验证 Windows 11 ARM64、MSYS2 CLANGARM64 工具链。Windows x64 / CLANG64
 已通过 Windows Server 2022 CI 的构建、73/73 离线测试、安装搬移与对应源码交付；
 x64 真机 USB / Wi-Fi 尚未验证。MSVC 尚未支持和验证。
-CLI 使用 Rust，窗口和音频输出使用 SDL3，本地文件播放使用 FFmpeg。
+CLI 使用 Rust，窗口和音频输出使用 SDL3。
 真实音乐离线解码及用户确认的短时 USB 播放已通过；新版调节层的 Wi-Fi 默认路由
 四分钟、双端播放和无音频对照均已确认，200 ms 缓冲下听感正常。USB 持续连接尚未通过；配置与对照见
 [音频记录](coredevice.md#171-音频解码后端只能选-audiotoolbox实测同一份-dump-四路对照)。
@@ -35,13 +35,7 @@ pacman -S --needed \
   ${MINGW_PACKAGE_PREFIX}-ninja \
   ${MINGW_PACKAGE_PREFIX}-rust ${MINGW_PACKAGE_PREFIX}-sdl3 \
   ${MINGW_PACKAGE_PREFIX}-python ${MINGW_PACKAGE_PREFIX}-pkgconf \
-  ${MINGW_PACKAGE_PREFIX}-ffmpeg ${MINGW_PACKAGE_PREFIX}-nlohmann-json
-
-if [[ "$MSYSTEM" == CLANG64 ]]; then
-  pacman -S --needed ${MINGW_PACKAGE_PREFIX}-nasm
-  export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-D__X86INTRIN_H"
-fi
-export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
+  ${MINGW_PACKAGE_PREFIX}-nlohmann-json
 
 git submodule update --init --recursive
 cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release \

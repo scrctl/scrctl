@@ -4,12 +4,11 @@
 
 ```bash
 git submodule update --init --recursive
-brew install cmake rust sdl3 ffmpeg pkg-config
+brew install cmake rust sdl3 pkg-config
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 cmake --install build --prefix dist-macos
 python3 tools/record_macos_package.py dist-macos --source-commit "$(git rev-parse HEAD)"
-ffmpeg -version > dist-macos/share/doc/scrctl/ffmpeg-build.txt
 python3 tools/test_macos_install.py dist-macos
 ```
 

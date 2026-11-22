@@ -6,8 +6,8 @@
 
 ## 当前：XDeviceBridge 接入
 
-设备协议与媒体后端已迁到独立的 XDeviceBridge；scrctl 作为客户端维护显示、声音输出、
-快捷键和本地回放。MaaFramework 使用同一客户端协议。桌面客户端会自动启动并复用本机后台 Server，可通过 `xdb start-server` /
+设备协议与媒体后端已迁到独立的 XDeviceBridge；scrctl 作为客户端处理画面显示、声音输出
+和快捷键。MaaFramework 使用同一客户端协议。桌面客户端会自动启动并复用本机后台 Server，可通过 `xdb start-server` /
 `xdb kill-server` 显式管理。Android 客户端不自动启动进程。
 新链路的测试与真机验收见 [XDeviceBridge 验证记录](https://github.com/scrctl/XDeviceBridge/blob/main/docs/VALIDATION.md)。
 下文保留重构前的协议实现和历史验收记录，旧路径与探针不再属于当前构建。

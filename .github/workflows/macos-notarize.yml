@@ -41,7 +41,7 @@ jobs:
               raise SystemExit('Tag must match the CMake project version exactly')
           PYTAG
       - name: Install dependencies
-        run: brew install sdl3 ffmpeg pkg-config
+        run: brew install sdl3 pkg-config
       - name: Build and install
         run: |
           rustup update stable
@@ -62,7 +62,6 @@ jobs:
       - name: Collect corresponding sources and validate installation
         run: |
           python3 tools/record_macos_package.py dist-macos --source-commit "$GITHUB_SHA" --developer-id-signed
-          ffmpeg -version > dist-macos/share/doc/scrctl/ffmpeg-build.txt
           git archive --format=tar HEAD > dist-macos/share/doc/scrctl/scrctl-source.tar
           HOMEBREW_DEVELOPER=1 HOMEBREW_NO_AUTO_UPDATE=1 brew ruby tools/collect_macos_sources.rb dist-macos sources-macos/homebrew
           python3 tools/collect_embedded_sources.py build sources-macos/embedded

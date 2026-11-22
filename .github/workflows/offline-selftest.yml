@@ -22,7 +22,7 @@ jobs:
             # 标准 macos-15 runner 是 ARM64；固定系统，避免 latest 升到 26
             # 后把主程序和 Homebrew bottles 的最低系统要求一起提升。
             os: macos-15
-            # 下载精确版本的依赖源码；较大的 VCS/FFmpeg 依赖需要额外时间。
+            # 下载精确版本的依赖源码；较大的 VCS 依赖需要额外时间。
             timeout_minutes: 90
             build_jobs: 3
           - name: Ubuntu
@@ -38,15 +38,14 @@ jobs:
       - name: 装依赖（macOS）
         if: runner.os == 'macOS'
         # 前端依赖；设备服务由独立的 xdb Server 提供。
-        run: brew install sdl3 ffmpeg pkg-config
+        run: brew install sdl3 pkg-config
 
       - name: 装依赖（Linux）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake clang libclang-dev pkg-config python3 libsdl3-dev \
-            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+            cmake pkg-config python3 libsdl3-dev
 
       - name: 配置
         # 不指定 -G：默认生成器总归在，而 Ninja 是否预装是 runner 镜像的事。
@@ -76,7 +75,6 @@ jobs:
           cmake --install build --prefix dist-macos
           test ! -e dist-macos/bin/scrctl-legacy
           python3 tools/record_macos_package.py dist-macos --source-commit "$GITHUB_SHA"
-          ffmpeg -version > dist-macos/share/doc/scrctl/ffmpeg-build.txt
           git archive --format=tar HEAD > dist-macos/share/doc/scrctl/scrctl-source.tar
 
       - name: 收集 macOS 对应源码和构建材料
@@ -150,11 +148,9 @@ jobs:
             ${{ matrix.package_prefix }}-cmake
             ${{ matrix.package_prefix }}-ninja
             ${{ matrix.package_prefix }}-rust
-            ${{ matrix.arch == 'x64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
             ${{ matrix.package_prefix }}-sdl3
             ${{ matrix.package_prefix }}-python
             ${{ matrix.package_prefix }}-pkgconf
-            ${{ matrix.package_prefix }}-ffmpeg
             ${{ matrix.package_prefix }}-nlohmann-json
       - name: 用 MSYS2 Git 统一源码换行与索引
         run: |
@@ -194,10 +190,6 @@ jobs:
           -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON
       - name: 构建
         run: |
-          export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
-          if [[ "${{ matrix.arch }}" == x64 ]]; then
-            export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-D__X86INTRIN_H"
-          fi
           cmake --build build-win --parallel 4
       - name: 安装产物和依赖记录
         run: |
@@ -206,7 +198,6 @@ jobs:
           mkdir -p dist-win/share/doc/scrctl/dependency-licenses
           cp -R "$MINGW_PREFIX/share/licenses/." dist-win/share/doc/scrctl/dependency-licenses/
           pacman -Q > dist-win/share/doc/scrctl/package-versions.txt
-          ffmpeg -version > dist-win/share/doc/scrctl/ffmpeg-build.txt
           git rev-parse HEAD > dist-win/share/doc/scrctl/source-commit.txt
           git archive --format=tar HEAD > dist-win/share/doc/scrctl/scrctl-source.tar
           python tools/record_windows_package.py dist-win --runtime-directory "$MINGW_PREFIX/bin" --project-runtime-directory build-win --source-commit "$GITHUB_SHA"

@@ -163,7 +163,7 @@ scrctl -r capture.hevc
 
 MP4/MKV preserve original HEVC and AAC-ELD packets without re-encoding. Raw HEVC
 stores video only. Container playback requires a player with suitable codec and
-orientation support; `scrctl --play file.hevc` only plays raw HEVC files.
+orientation support.
 
 Recording uses a fixed initial device orientation. Later rotation preserves the
 encoded canvas and does not update that metadata. There is no automatic pixel
@@ -193,16 +193,15 @@ Use a Git checkout with submodules. The server is built and installed separately
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS
-brew install cmake rust sdl3 ffmpeg pkgconf
+brew install cmake rust sdl3 pkgconf
 # Debian / Ubuntu instead:
-# sudo apt install build-essential cmake clang libclang-dev pkg-config libsdl3-dev \
-#   libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+# sudo apt install build-essential cmake pkg-config libsdl3-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 ```
 
 Windows builds use MSYS2 CLANG64 (x64) or CLANGARM64 (ARM64), with the matching
-Rust, CMake, compiler, SDL 3.4+ and FFmpeg packages; see the
+Rust, CMake, compiler, and SDL 3.4+ packages. See the
 [CI recipe](../.github/workflows/rust-install.yml).
 
 For an offline XDB client build, set `XDB_FETCH_DEPENDENCIES=OFF` and provide
@@ -210,9 +209,8 @@ nlohmann/json from an installed package or `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSO
 Use the locked Cargo dependencies. Live device media is decoded by XDB.
 
 Runtime archives include corresponding source deliveries, dependency recipes,
-patches and checksums. Check the shipped FFmpeg configuration and licenses;
-“no re-encoding” does not remove FFmpeg distribution obligations or establish
-bit-for-bit reproducible builds.
+patches and checksums. See [Source materials](SOURCE_MATERIALS.md) for the
+dependency versions and build recipes.
 
 ## Troubleshooting
 

@@ -19,7 +19,3 @@ install(RUNTIME_DEPENDENCY_SET scrctl_runtime
     RUNTIME DESTINATION bin)
 
 install(FILES $<TARGET_FILE:xdb_client> DESTINATION bin)
-
-# 一些 MSYS2 包未安装 GNU 许可证正文，随安装目录补充；项目许可另行保留。
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/cmake/licenses/"
-    DESTINATION share/doc/scrctl/dependency-licenses)

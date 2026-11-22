@@ -23,14 +23,12 @@ jobs:
           persist-credentials: false
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install sdl3 ffmpeg pkg-config
+        run: brew install sdl3 pkg-config
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build clang libclang-dev \
-            pkg-config libsdl3-dev ffmpeg libavformat-dev \
-            libavcodec-dev libavutil-dev libswscale-dev
+          sudo apt-get install -y --no-install-recommends cmake ninja-build pkg-config libsdl3-dev
       - name: Build and install
         run: |
           rustup update stable
@@ -49,13 +47,12 @@ jobs:
           python3 tests/xdb_integration_test.py relocated-rust/bin/scrctl
           python3 core/tests/cli_targets.py relocated-rust/bin/scrctl --interactive
           python3 core/tests/sdl_playback.py relocated-rust/bin/scrctl
-          python3 core/tests/file_cli_parity.py relocated-rust/bin/scrctl
       - name: Verify desktop input packet handling
         run: |
           export XDB_LIB_DIR="$PWD/build/xdb"
           export DYLD_LIBRARY_PATH="$XDB_LIB_DIR" LD_LIBRARY_PATH="$XDB_LIB_DIR"
           cargo test --manifest-path core/Cargo.toml --target-dir build/rust-target \
-            --release --locked -p scrctl-cli --features sdl3,ffmpeg-next desktop::window::tests
+            --release --locked -p scrctl-cli --features sdl3 desktop::window::tests
   install-windows:
     strategy:
       fail-fast: false
@@ -86,23 +83,14 @@ jobs:
             ${{ matrix.prefix }}-clang
             ${{ matrix.prefix }}-cmake
             ${{ matrix.prefix }}-ninja
-            ${{ matrix.machine == 'AMD64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
             ${{ matrix.prefix }}-rust
             ${{ matrix.prefix }}-sdl3
-            ${{ matrix.prefix }}-ffmpeg
             ${{ matrix.prefix }}-python
             ${{ matrix.prefix }}-pkgconf
       - name: Build and install Windows package
         shell: msys2 {0}
         run: |
           set -euo pipefail
-          export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
-          if [[ "${{ matrix.machine }}" == AMD64 ]]; then
-            # MinGW's intrin.h pulls in Clang's x86intrin.h. Bindgen emits an
-            # invalid packed/aligned AMX type from it. FFmpeg's public headers
-            # do not need these compiler intrinsics.
-            export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-D__X86INTRIN_H"
-          fi
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build build --parallel 4
@@ -120,4 +108,3 @@ jobs:
           python tests/xdb_integration_test.py dist-rust/bin/scrctl.exe
           python core/tests/cli_targets.py dist-rust/bin/scrctl.exe --interactive
           python core/tests/sdl_playback.py dist-rust/bin/scrctl.exe
-          python core/tests/file_cli_parity.py dist-rust/bin/scrctl.exe

@@ -30,13 +30,15 @@ for args, locale, chinese in (
         assert "iOS 屏幕镜像与控制" in result.stdout and "显示帮助" in result.stdout, result
     else:
         assert "iOS screen mirroring and control" in result.stdout, result
-    for option in ("--wifi", "--list-devices", "--pair", "--install-ddi", "--play",
+    for option in ("--wifi", "--list-devices", "--pair", "--install-ddi",
                    "--record", "--record-orientation", "--audio-buffer", "MOD+V"):
         assert option in result.stdout, (option, result)
+    assert "--play " not in result.stdout, result
 
 
 for args, option in (
     (["--definitely-invalid"], "--definitely-invalid"),
+    (["--play", "probe.hevc"], "--play"),
     (["--audio-buffer", "-1"], "-1"),
     (["--ddi-product-type", "Model"], "--ddi-product-type"),
     (["--wifi=auto", "--wifi-port=49152"], "--wifi-port"),

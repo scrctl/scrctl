@@ -208,29 +208,9 @@ checks RPC parameters and finalization order;
 it does not produce an actual media file.
 
 
-### Local HEVC playback
-
-Build with `--features sdl3,ffmpeg-next` to run software Annex-B HEVC playback
-through Rust and the existing system FFmpeg libraries. The supported options
-are `--play`, `--no-window`, `--title` / `--window-title`, `--exit-after`
-and `--hw-decode`. On macOS the latter uses VideoToolbox and requires an
-actual hardware frame. On Linux and Windows it retains the legacy local
-file decoder's software behavior. Additional playback/geometry options
-use the C++ frontend. Run the parity check from the repository root:
-
-```sh
-DYLD_LIBRARY_PATH=/opt/homebrew/opt/xdb/lib \
-  python3 core/tests/file_cli_parity.py /opt/homebrew/bin/scrctl core/target/debug/scrctl
-```
-
-The test creates an Annex-B sample with FFmpeg's executable and libx265.
-Normal Rust playback links the FFmpeg libraries directly.
-
-Set `SCRCTL_TEST_HW_DECODE=1` to include the macOS hardware playback checks.
-
 ### Native CLI installation
 
-CMake builds the Rust CLI with SDL3 and FFmpeg and installs it as `bin/scrctl`.
+CMake builds the Rust CLI with SDL3 and installs it as `bin/scrctl`.
 Use a separate prefix on macOS for the bundled dylibs and local signatures.
 
 ```sh
@@ -240,5 +220,5 @@ cmake --install build --prefix "$PWD/dist"
 python3 tools/test_macos_install.py dist
 ```
 
-Linux uses system SDL3 and FFmpeg and installs the XDB client under `bin/lib`.
+Linux uses system SDL3 and installs the XDB client under `bin/lib`.
 Windows scans the executable's imports to bundle the matching native DLLs.

@@ -160,7 +160,7 @@ If authentication is required, set `SCRCTL_USERNAME` and `SCRCTL_PASSWORD`.
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS prerequisites:
-brew install cmake rust sdl3 ffmpeg pkgconf
+brew install cmake rust sdl3 pkgconf
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 cmake --install build --prefix dist

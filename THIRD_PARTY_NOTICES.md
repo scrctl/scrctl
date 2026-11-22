@@ -1,8 +1,7 @@
 # Third-party notices
 
-The frontend links SDL3 (zlib), FFmpeg and XDeviceBridge's client library
-(LGPL-3.0-only). The FFmpeg build configuration determines its LGPL/GPL
-requirements. Cargo.lock records the Rust dependencies.
+The frontend links SDL3 (zlib) and the XDeviceBridge client library
+(LGPL-3.0-only). Cargo.lock records the Rust dependencies.
 
 The Apple DCT decoder includes Rust code ported from stb_image under the MIT
 license. The stb license is installed under `share/licenses/stb`.

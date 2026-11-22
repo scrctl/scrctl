@@ -25,9 +25,6 @@ struct Options {
     /// Show help
     #[arg(short, long)]
     help: bool,
-    /// Play an Annex-B HEVC file
-    #[arg(long)]
-    play: Option<std::path::PathBuf>,
     #[command(flatten)]
     target: crate::device_cli::Target,
     #[command(flatten)]
@@ -642,27 +639,6 @@ pub fn run_cli(args: &[OsString]) -> Result<i32, Box<dyn Error>> {
     if options.commands.pair_requested() && options.start_app.is_some() {
         return invalid("--pair excludes --start-app");
     }
-    let playing = options
-        .play
-        .as_ref()
-        .is_some_and(|path| !path.as_os_str().is_empty());
-    if explicit("play") {
-        for (conflict, option) in [
-            (options.record.is_some(), "--record"),
-            (options.commands.pair_requested(), "--pair"),
-            (options.video_bit_rate.is_some(), "--video-bit-rate"),
-            (options.max_fps.is_some(), "--max-fps"),
-        ] {
-            if conflict {
-                return invalid(&format!("{option} excludes --play"));
-            }
-        }
-    }
-    if playing && (options.no_video || options.no_video_playback) {
-        return invalid(
-            "--play: File playback requires video; incompatible with video playback disable options",
-        );
-    }
     let orientations = Orientations::resolve(&matches);
     if options.record.as_deref() == Some("") {
         if options.record_format.is_some() {
@@ -684,8 +660,7 @@ pub fn run_cli(args: &[OsString]) -> Result<i32, Box<dyn Error>> {
     }
 
     let screenshots = options.video_source.as_deref() == Some("screenshot");
-    if !playing
-        && options.record.is_none()
+    if options.record.is_none()
         && (options.no_window || options.no_video_playback)
         && options.exit_after == 0
         && !options.hw_decode
@@ -784,43 +759,6 @@ pub fn run_cli(args: &[OsString]) -> Result<i32, Box<dyn Error>> {
             .commands
             .run(&options.target)
             .expect("device command was selected"));
-    }
-    if playing {
-        #[cfg(not(feature = "ffmpeg-next"))]
-        return Err("This build does not include file playback".into());
-        #[cfg(feature = "ffmpeg-next")]
-        {
-            if options
-                .start_app
-                .as_ref()
-                .is_some_and(|app| !app.is_empty())
-            {
-                eprintln!("File playback cannot launch a device app; ignoring --start-app");
-            }
-            let result = crate::file_cli::run(crate::file_cli::Options {
-                play: options.play.expect("nonempty file path validated"),
-                no_window: options.no_window,
-                diagnostics: options.diagnostics,
-                hw_decode: options.hw_decode,
-                window: options.window,
-                fullscreen: options.fullscreen,
-                window_borderless: options.window_borderless,
-                window_width: options.window_width,
-                window_height: options.window_height,
-                scale: options.scale,
-                crop: options.crop,
-                display_orientation: orientations.display,
-                time_limit: options.time_limit,
-                exit_after: options.exit_after,
-            });
-            return Ok(match result {
-                Ok(()) => 0,
-                Err(error) => {
-                    eprintln!("{error}");
-                    1
-                }
-            });
-        }
     }
     if options
         .start_app

@@ -15,10 +15,7 @@ SHA256；源码清单逐文件记录路径、大小及 SHA256。源码收集失�
 保留这些记录，不能仅提供上游首页或另一版本的源码。
 
 这些材料包含源码和实际构建配方，不表示逐字节可复现的二进制构建已验证，也不代替
-依赖许可组合的分发条件审核。当前 Homebrew/MSYS2 的 FFmpeg 配置可能启用 GPL
-和 version3；应查阅该包的 `ffmpeg-build.txt` 与许可证，不能标为纯 LGPL 构建。
-FFmpeg 官方要求源码准确对应分发的库，并提供编译方式与修改资料，见
-[FFmpeg 分发说明](https://ffmpeg.org/legal.html)。
+依赖许可组合的分发条件审核。
 
 ## 已验证交付
 
@@ -53,7 +50,7 @@ SHA256 为 `4c95b0b5f2066c387f51fe266258a71b5e2b3962f72c660fbf558546ed06f45b`。
 
 - `project/scrctl-source.tar`：安装包记录的同一 Git 提交，含 CMake、平台适配、
   源码收集工具和许可证；子模块由 embedded 中的固定源码单独覆盖。
-- `build/`：实际依赖版本、库来源与哈希、FFmpeg 构建选项、CMakeCache、
+- `build/`：实际依赖版本、库来源与哈希、CMakeCache、
   compile_commands 和 CI 工作流。缓存和命令中的绝对路径来自构建机，重建时应替换。
 - `embedded/`：CMake 本次实际选择的 JSON 和 XDeviceBridge 客户端源码树，
   包括许可证、上游构建文件、每个源码归档及内部文件的哈希。安装包 CI 强制使用固定
@@ -100,7 +97,7 @@ Ubuntu CI 当前没有发布独立 Linux 安装包，因此不生成 Linux 分�
 
 ## 本地生成
 
-先配置、构建并安装到独立目录，记录实际依赖及 FFmpeg 构建选项。
+先配置、构建并安装到独立目录，记录实际依赖。
 `CMAKE_EXPORT_COMPILE_COMMANDS=ON` 必须在配置时启用。
 
 macOS：

@@ -75,5 +75,3 @@ install(CODE [[
         endif()
     endforeach()
 ]])
-install(DIRECTORY "${PROJECT_SOURCE_DIR}/cmake/licenses/"
-    DESTINATION share/doc/scrctl/dependency-licenses/gnu)

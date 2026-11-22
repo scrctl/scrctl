@@ -142,7 +142,7 @@ scrctl -r capture.hevc
 ```
 
 MP4/MKV 不重编码，保存设备原始 HEVC 与 AAC-ELD 数据包；裸 HEVC 只保存视频。
-容器播放要求播放器支持对应编码和方向元数据；`scrctl --play file.hevc` 仅回放裸 HEVC。
+容器播放要求播放器支持对应编码和方向元数据。
 
 录制保存起录时的固定设备方向。后续转屏保留编码画布，不更新方向元数据。
 没有自动像素旋正、缩放、补黑边，也不支持 `--record-orientation=auto`。
@@ -170,24 +170,22 @@ scrctl -r capture.mp4 --orientation=90
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS
-brew install cmake rust sdl3 ffmpeg pkgconf
+brew install cmake rust sdl3 pkgconf
 # Debian / Ubuntu 改用：
-# sudo apt install build-essential cmake clang libclang-dev pkg-config libsdl3-dev \
-#   libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
+# sudo apt install build-essential cmake pkg-config libsdl3-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
 ```
 
 Windows 使用 MSYS2 CLANG64（x64）或 CLANGARM64（ARM64）以及相应的
-Rust、CMake、编译器、SDL 3.4 及以上版本和 FFmpeg 开发包，见
+Rust、CMake、编译器、SDL 3.4 及以上版本，见
 [CI 构建配方](../.github/workflows/rust-install.yml)。
 
 离线构建 XDB 客户端时设置 `XDB_FETCH_DEPENDENCIES=OFF`，通过系统安装包或
 `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` 提供 nlohmann/json。Rust 依赖由 Cargo.lock
 固定，实时设备媒体仍由 XDB 解码。
 
-运行包配套提供对应源码、依赖配方、补丁和校验和。请检查包内 FFmpeg 配置与许可；
-“不重编码”不代表没有 FFmpeg 分发义务，也不证明已实现逐字节可复现构建。
+运行包配套提供对应源码、依赖配方、补丁和校验和，详见[源码材料](SOURCE_MATERIALS.md)。
 
 ## 故障排查
 

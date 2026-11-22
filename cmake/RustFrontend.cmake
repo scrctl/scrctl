@@ -15,7 +15,7 @@ add_custom_target(scrctl-rust ALL
     COMMAND "${CMAKE_COMMAND}" -E env
         "XDB_LIB_DIR=$<TARGET_LINKER_FILE_DIR:xdb_client>"
         "${SCRCTL_CARGO}" rustc --manifest-path "${PROJECT_SOURCE_DIR}/core/Cargo.toml"
-        --package scrctl-cli --bin scrctl --features sdl3,ffmpeg-next --locked --release
+        --package scrctl-cli --bin scrctl --features sdl3 --locked --release
         --target-dir "${scrctl_cargo_target}" -- ${scrctl_rust_link_args}
     BYPRODUCTS "${SCRCTL_EXECUTABLE}"
     DEPENDS xdb_client

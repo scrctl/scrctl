@@ -19,7 +19,6 @@ pub(crate) fn localize_chinese(mut command: Command) -> Command {
         ("help", "显示帮助"),
         ("version", "显示版本"),
         ("lang", "消息语言，可用 auto、en、zh-CN"),
-        ("play", "播放 Annex-B HEVC 文件"),
         ("serial", "按 UDID 选择设备"),
         ("wifi", "指定局域网地址，或用 auto 自动发现已配对设备"),
         ("wifi_port", "指定手动连接的 RemotePairing 端口"),
