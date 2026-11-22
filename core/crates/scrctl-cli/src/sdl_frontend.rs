@@ -222,6 +222,15 @@ impl WindowOptions {
         builder
     }
 
+    pub(crate) fn set_icon(window: &mut sdl3::video::Window) {
+        const ICON: &[u8] = include_bytes!("../../../../assets/icon/scrctl-icon-1024.png");
+        if let Ok(icon) = sdl3::iostream::IOStream::from_bytes(ICON)
+            .and_then(|mut stream| sdl3::surface::Surface::load_png_io(&mut stream))
+        {
+            window.set_icon(icon);
+        }
+    }
+
     pub(crate) fn canvas(
         &self,
         window: sdl3::video::Window,
@@ -409,9 +418,20 @@ impl<'a> FrameSource<'a> {
             }
             let result = session.screenshot();
             self.next_screenshot = Instant::now() + Duration::from_millis(100);
-            result?
+            result
         } else {
-            session.next_frame(self.video_serial, timeout)?
+            session.next_frame(self.video_serial, timeout)
+        };
+        let frame = match frame {
+            Err(xdb_engine::Error::Server { code, .. })
+                if code != "not_connected" && code != "transport_error" =>
+            {
+                if !screenshot {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                None
+            }
+            result => result?,
         };
         Ok(frame.map(|mut frame| {
             if !screenshot {
@@ -1603,6 +1623,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
             skip_video: config.no_video,
             screenshots: config.video_source.as_deref() == Some("screenshot"),
             allow_screenshot_fallback: true,
+            allow_shared_control: true,
         },
     )?;
     let mut source = FrameSource::new(
@@ -1687,6 +1708,7 @@ fn run(config: Options, orientations: Orientations) -> Result<(), Box<dyn Error>
         builder.borderless();
     }
     let mut window = builder.build()?;
+    WindowOptions::set_icon(&mut window);
     if config.fullscreen {
         window.set_fullscreen(true)?;
     }
@@ -1989,6 +2011,7 @@ fn run_headless(
             builder.borderless();
         }
         let mut window = builder.build()?;
+        WindowOptions::set_icon(&mut window);
         if config.fullscreen {
             window.set_fullscreen(true)?;
         }

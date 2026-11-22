@@ -3,13 +3,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'xdb/tests/support'))
 from fake_server import FakeServer
 
 exe = str(Path(sys.argv[1]).resolve())
-with FakeServer() as server:
+with TemporaryDirectory() as directory, FakeServer() as server:
     env = {**os.environ, **server.environment, 'SDL_VIDEODRIVER':'dummy', 'SDL_AUDIODRIVER':'dummy', 'SDL_RENDER_DRIVER':'software'}
     def run(*args, warning=None):
         result = subprocess.run([exe, '--lang', 'en', *args], env=env, capture_output=True, text=True, encoding="utf-8", timeout=12)
@@ -32,7 +33,7 @@ with FakeServer() as server:
     assert 'audio.read' in server.methods()
     assert any(name == 'audio.start' and p['duplicate'] and p['buffer_ms'] == 200 for name,p in server.calls)
     # Server-side encoded recording remains usable without local decode or playback.
-    run('-s', 'mock-iphone', '--no-window', '--no-playback', '--record', str(root/'build-xdb/mock-recording.mkv'), '--time-limit', '1')
+    run('-s', 'mock-iphone', '--no-window', '--no-playback', '--record', str(Path(directory) / 'mock-recording.mkv'), '--time-limit', '1')
     assert 'recording.configure' in server.methods()
     assert any(name == 'video.start' and p['decode'] is False for name,p in server.calls)
     assert 'media.finish' in server.methods()
@@ -64,7 +65,7 @@ with FakeServer() as server:
     assert not any(name == 'media.finish' for name, _ in shared_calls)
     assert any(name == 'connection.close' for name, _ in shared_calls)
     start = len(server.calls)
-    run('-s', 'mock-iphone', '--no-window', '--no-playback', '--record', str(root/'build-xdb/mock-recording.mkv'), '--time-limit', '1')
+    run('-s', 'mock-iphone', '--no-window', '--no-playback', '--record', str(Path(directory) / 'mock-recording.mkv'), '--time-limit', '1')
     assert any(name == 'connection.open' and 'access' not in p for name, p in server.calls[start:])
     assert any(name == 'media.finish' for name, _ in server.calls[start:])
 
@@ -80,7 +81,7 @@ class FrameFailureServer(FakeServer):
             self.frame_requests += 1
             if self.frame_requests == 2:
                 if self.disconnect:
-                    # The C++ client must classify EOF without inspecting its message.
+                    # Transport EOF must remain fatal independently of its message.
                     raise ConnectionResetError('test peer disconnect')
                 raise ValueError('temporary socket capture error')
         return result

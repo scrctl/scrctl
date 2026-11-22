@@ -193,6 +193,7 @@ pub struct VideoOptions<'a> {
     pub skip_video: bool,
     pub screenshots: bool,
     pub allow_screenshot_fallback: bool,
+    pub allow_shared_control: bool,
 }
 
 pub struct Session {
@@ -251,9 +252,14 @@ impl Session {
             ));
         }
         let mut client = Client::connect(port)?;
-        if options.max_bitrate.unwrap_or(0) > 0 || options.max_fps > 0 {
+        let allow_shared =
+            options.allow_shared_control && recording.is_none() && !options.skip_video;
+        let request_limits = options.max_bitrate.unwrap_or(0) > 0 || options.max_fps > 0;
+        let mut shared = false;
+        if allow_shared || request_limits {
             let (info, _) = client.request(c"server.info", json!({}))?;
             let capabilities = &info["capabilities"];
+            shared = allow_shared && capabilities["shared_control_sessions"] == true;
             if (options.max_bitrate.unwrap_or(0) > 0 && capabilities["video_max_bitrate"] != true)
                 || (options.max_fps > 0 && capabilities["video_max_fps"] != true)
             {
@@ -267,6 +273,9 @@ impl Session {
             params["wifi"] = json!(wifi);
             params["port"] = json!(wifi_port);
         }
+        if shared {
+            params["access"] = json!("shared");
+        }
         let (opened, _) = client.request(c"connection.open", params)?;
         let mut session = Self {
             client,
@@ -276,6 +285,11 @@ impl Session {
             recording_pending: recording.is_some(),
             screenshots: options.screenshots,
         };
+        if shared && opened["access"] != "shared" {
+            return Err(Error::Client(
+                "XDB Server did not confirm shared control access".into(),
+            ));
+        }
         let mut video = json!({
             "decode": decode,
             "hardware_decode": decode && options.hardware_decode,

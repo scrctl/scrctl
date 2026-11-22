@@ -166,6 +166,7 @@ pub(crate) fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 builder.borderless();
             }
             let mut window = builder.build()?;
+            WindowOptions::set_icon(&mut window);
             if options.fullscreen {
                 window.set_fullscreen(true)?;
             }
