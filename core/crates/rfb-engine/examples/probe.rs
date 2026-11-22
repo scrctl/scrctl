@@ -1,7 +1,7 @@
 //! Connects to a real RFB server and saves the first frame as a BMP.
 //!
-//! Credentials are read from `OPENSCREENS_USERNAME` and
-//! `OPENSCREENS_PASSWORD` so they never live in the repository.
+//! Credentials are read from `SCRCTL_USERNAME` and
+//! `SCRCTL_PASSWORD` so they never live in the repository.
 
 use std::env;
 use std::fs::File;
@@ -22,8 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SessionConfig {
         host,
         port,
-        username: env::var("OPENSCREENS_USERNAME").ok(),
-        password: env::var("OPENSCREENS_PASSWORD").ok(),
+        username: env::var("SCRCTL_USERNAME").ok(),
+        password: env::var("SCRCTL_PASSWORD").ok(),
         shared: true,
         local_cursor: false,
         quality: 9,

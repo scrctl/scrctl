@@ -1,7 +1,7 @@
 //! Live end-to-end check of the engine's OpenVPN stream.
 //!
 //! Skipped unless `OPENVPN_TEST_PROFILE` points at an `.ovpn` file. Optional
-//! `OPENSCREENS_USERNAME` / `OPENSCREENS_PASSWORD` feed the RFB handshake.
+//! `SCRCTL_USERNAME` / `SCRCTL_PASSWORD` feed the RFB handshake.
 //! Neither the profile nor the credentials are ever printed.
 
 use std::time::Duration;
@@ -21,8 +21,8 @@ async fn engine_connects_through_openvpn_tunnel() {
     let mut failures = Vec::new();
     for (host, port) in TARGETS {
         let mut config = SessionConfig::new(host, port);
-        config.username = std::env::var("OPENSCREENS_USERNAME").ok();
-        config.password = std::env::var("OPENSCREENS_PASSWORD").ok();
+        config.username = std::env::var("SCRCTL_USERNAME").ok();
+        config.password = std::env::var("SCRCTL_PASSWORD").ok();
         config.openvpn = Some(OpenVpnSettings {
             profile: profile.clone(),
             connect_timeout_secs: 20,
