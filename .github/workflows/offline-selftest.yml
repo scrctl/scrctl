@@ -159,7 +159,7 @@ jobs:
         with:
           submodules: recursive
       - name: 安装 ${{ matrix.label }} 工具链和依赖
-        uses: msys2/setup-msys2@v2
+        uses: msys2/setup-msys2@3c51bf698df1e37b2261f53cb67797b97761185c # v2.34.0
         with:
           msystem: ${{ matrix.msystem }}
           update: true
