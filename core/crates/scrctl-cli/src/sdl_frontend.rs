@@ -812,10 +812,14 @@ pub fn run_cli(args: &[OsString]) -> Result<i32, Box<dyn Error>> {
     run(options, orientations).map(|()| 0)
 }
 
+const AUDIO_READ_FRAMES: u32 = 960;
+const AUDIO_QUEUE_CHUNKS: i32 = 2;
+
 struct Playback {
     reader: AudioReader,
     output: AudioStreamOwner,
-    chunk_bytes: i32,
+    queue_target_bytes: i32,
+    started: bool,
 }
 
 impl Playback {
@@ -832,17 +836,30 @@ impl Playback {
         Ok(Self {
             reader,
             output,
-            chunk_bytes: 960 * i32::from(channels) * 2,
+            queue_target_bytes: AUDIO_QUEUE_CHUNKS
+                * AUDIO_READ_FRAMES as i32
+                * i32::from(channels)
+                * size_of::<i16>() as i32,
+            started: false,
         })
     }
 
     fn fill(&mut self) -> Result<(), Box<dyn Error>> {
-        if self.output.queued_bytes()? < self.chunk_bytes {
-            let samples = self.reader.read(960)?;
-            if !samples.is_empty() {
-                self.output.put_data_i16(&samples)?;
-                self.output.resume()?;
+        // One 960-frame IPC chunk can be shorter than a hardware callback.
+        // Keep two chunks ready and bound work in each iteration of the UI loop.
+        for _ in 0..AUDIO_QUEUE_CHUNKS {
+            if self.output.queued_bytes()? >= self.queue_target_bytes {
+                break;
             }
+            let samples = self.reader.read(AUDIO_READ_FRAMES)?;
+            if samples.is_empty() {
+                break;
+            }
+            self.output.put_data_i16(&samples)?;
+        }
+        if !self.started && self.output.queued_bytes()? >= self.queue_target_bytes {
+            self.output.resume()?;
+            self.started = true;
         }
         Ok(())
     }
