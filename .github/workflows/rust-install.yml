@@ -3,6 +3,7 @@ name: Rust CLI installation
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -22,34 +23,33 @@ jobs:
           persist-credentials: false
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
-        run: brew install sdl2 sdl3 ffmpeg pkg-config gettext
+        run: brew install sdl3 ffmpeg pkg-config
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake ninja-build clang libclang-dev \
-            pkg-config gettext libsdl2-dev libsdl3-dev ffmpeg libavformat-dev \
+            pkg-config libsdl3-dev ffmpeg libavformat-dev \
             libavcodec-dev libavutil-dev libswscale-dev
       - name: Build and install
         run: |
           rustup update stable
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 4
           cmake --install build --prefix dist-rust
           mv dist-rust relocated-rust
           test ! -e relocated-rust/bin/scrctl-legacy
       - name: Verify relocated macOS library closure
         if: runner.os == 'macOS'
-        run: python3 tools/test_macos_install.py relocated-rust build
+        run: python3 tools/test_macos_install.py relocated-rust
       - name: Verify native CLI and media paths
-        env:
-          SCRCTL_TEST_NATIVE_OPTIONS: '1'
         run: |
           unset DYLD_LIBRARY_PATH LD_LIBRARY_PATH
-          python3 core/tests/cli_parity.py build/scrctl relocated-rust/bin/scrctl
+          python3 core/tests/cli_contract.py relocated-rust/bin/scrctl
+          python3 tests/xdb_integration_test.py relocated-rust/bin/scrctl
           python3 core/tests/cli_targets.py relocated-rust/bin/scrctl
           python3 core/tests/sdl_playback.py relocated-rust/bin/scrctl
-          python3 core/tests/file_cli_parity.py build/scrctl relocated-rust/bin/scrctl
+          python3 core/tests/file_cli_parity.py relocated-rust/bin/scrctl
   install-windows:
     strategy:
       fail-fast: false
@@ -82,9 +82,7 @@ jobs:
             ${{ matrix.prefix }}-ninja
             ${{ matrix.machine == 'AMD64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
             ${{ matrix.prefix }}-rust
-            ${{ matrix.prefix }}-gettext-tools
             ${{ matrix.prefix }}-sdl3
-            ${{ matrix.prefix }}-sdl2-compat
             ${{ matrix.prefix }}-ffmpeg
             ${{ matrix.prefix }}-python
             ${{ matrix.prefix }}-pkgconf
@@ -99,7 +97,7 @@ jobs:
             # do not need these compiler intrinsics.
             export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-D__X86INTRIN_H"
           fi
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build build --parallel 4
           cmake --install build --prefix dist-rust
@@ -107,11 +105,13 @@ jobs:
           llvm-readobj --file-headers dist-rust/bin/scrctl.exe | grep -F 'IMAGE_FILE_MACHINE_${{ matrix.machine }}'
       - name: Verify relocated Windows package with system PATH
         shell: pwsh
-        run: ./tools/test_windows_install.ps1 -InstallDirectory dist-rust -BuildDirectory build
+        run: ./tools/test_windows_install.ps1 -InstallDirectory dist-rust
       - name: Verify native Windows media paths
         shell: msys2 {0}
         run: |
           set -euo pipefail
+          python core/tests/cli_contract.py dist-rust/bin/scrctl.exe
+          python tests/xdb_integration_test.py dist-rust/bin/scrctl.exe
           python core/tests/cli_targets.py dist-rust/bin/scrctl.exe
           python core/tests/sdl_playback.py dist-rust/bin/scrctl.exe
-          python core/tests/file_cli_parity.py build/scrctl.exe dist-rust/bin/scrctl.exe
+          python core/tests/file_cli_parity.py dist-rust/bin/scrctl.exe

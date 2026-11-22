@@ -170,24 +170,21 @@ scrctl -r capture.mp4 --orientation=90
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS
-brew install cmake sdl2-compat ffmpeg pkgconf gettext
+brew install cmake rust sdl3 ffmpeg pkgconf
 # Debian / Ubuntu 改用：
-# sudo apt install build-essential cmake pkg-config gettext python3 libsdl2-dev \
-#   libavcodec-dev libavutil-dev libswscale-dev
+# sudo apt install build-essential cmake clang libclang-dev pkg-config libsdl3-dev \
+#   libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
 ```
 
 Windows 使用 MSYS2 CLANG64（x64）或 CLANGARM64（ARM64）以及相应的
-CMake、编译器、SDL2、FFmpeg、gettext 和 Python 包，精确配方见
-[CI 文件](../.github/workflows/offline-selftest.yml)。
+Rust、CMake、编译器、SDL 3.4 及以上版本和 FFmpeg 开发包，见
+[CI 构建配方](../.github/workflows/rust-install.yml)。
 
-默认下载固定版本的缺失 JSON/CLI11 依赖。离线构建时，设置
-`SCRCTL_FETCH_DEPENDENCIES=OFF`，提供系统安装包或
-`FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` / `FETCHCONTENT_SOURCE_DIR_CLI11`。
-`SCRCTL_LIBAV=OFF` 关闭本地 FFmpeg 文件回放；
-`SCRCTL_BUILD_TESTS=OFF` 关闭前端测试。实时解码仍由 xdb 负责。
+离线构建 XDB 客户端时设置 `XDB_FETCH_DEPENDENCIES=OFF`，通过系统安装包或
+`FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` 提供 nlohmann/json。Rust 依赖由 Cargo.lock
+固定，实时设备媒体仍由 XDB 解码。
 
 运行包配套提供对应源码、依赖配方、补丁和校验和。请检查包内 FFmpeg 配置与许可；
 “不重编码”不代表没有 FFmpeg 分发义务，也不证明已实现逐字节可复现构建。

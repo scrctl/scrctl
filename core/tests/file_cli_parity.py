@@ -1,4 +1,4 @@
-"""Compare local software HEVC playback with the legacy CLI."""
+"""Check native HEVC playback, optionally comparing an existing legacy executable."""
 import os
 from pathlib import Path
 import subprocess
@@ -6,8 +6,9 @@ import struct
 import sys
 from tempfile import TemporaryDirectory
 
-legacy, rust = sys.argv[1:]
-env = dict(os.environ, SCRCTL_LEGACY_EXECUTABLE="/nonexistent", SDL_VIDEO_DRIVER="dummy")
+rust = sys.argv[-1]
+frontends = sys.argv[1:]
+env = dict(os.environ, LC_ALL="C", SDL_VIDEO_DRIVER="dummy")
 
 with TemporaryDirectory() as directory:
     root = Path(directory)
@@ -25,12 +26,20 @@ with TemporaryDirectory() as directory:
         (root, [], 1),
     ):
         args = ["--no-window", "--play", str(path), *options]
-        old, new = (subprocess.run([exe, *args], env=env, capture_output=True, timeout=10)
-                    for exe in (legacy, rust))
-        assert old.returncode == code, old
-        assert old.stdout.splitlines() == new.stdout.splitlines(), (old, new)
-        assert old.stderr.splitlines() == new.stderr.splitlines(), (old, new)
-        assert new.returncode == code, new
+        results = [subprocess.run([exe, *args], env=env, capture_output=True, timeout=10)
+                   for exe in frontends]
+        for result in results:
+            assert result.returncode == code, result
+            if code == 0:
+                frames = 3 if options else 5
+                assert f"processed {frames} frames".encode() in result.stdout, result
+            else:
+                error = b"Playback requires a regular file" if path == root else b"Cannot open file"
+                assert error in result.stderr, result
+        if len(results) == 2:
+            old, new = results
+            assert old.stdout.splitlines() == new.stdout.splitlines(), (old, new)
+            assert old.stderr.splitlines() == new.stderr.splitlines(), (old, new)
         print(f"PASS {path.name} {options} exit={code}")
 
     windowed = subprocess.run(
@@ -46,7 +55,7 @@ with TemporaryDirectory() as directory:
         "--window-borderless", "--window-width", "90", "--window-height", "100",
         "--background-color", "#123", "--exit-after", "3",
     ]
-    for frontend in (legacy, rust):
+    for frontend in frontends:
         bmp = root / ("readback-" + ("rust" if frontend == rust else "legacy") + ".bmp")
         result = subprocess.run(
             [frontend, *window_options, "--verify", "2", str(bmp)],
@@ -61,10 +70,9 @@ with TemporaryDirectory() as directory:
 
     if sys.platform == "darwin" and os.getenv("SCRCTL_TEST_HW_DECODE") == "1":
         args = ["--no-window", "--play", str(clip), "--hw-decode"]
-        old, new = (subprocess.run([exe, *args], env=env, capture_output=True, timeout=15)
-                    for exe in (legacy, rust))
-        assert (old.returncode, old.stdout, old.stderr) == (0, new.stdout, new.stderr), (old, new)
-        assert new.returncode == 0, new
+        for frontend in frontends:
+            result = subprocess.run([frontend, *args], env=env, capture_output=True, timeout=15)
+            assert result.returncode == 0 and b"processed 5 frames" in result.stdout, result
         windowed = subprocess.run([rust, "--play", str(clip), "--hw-decode", "--exit-after", "3"],
                                   env=env, capture_output=True, timeout=15)
         assert windowed.returncode == 0 and b"processed 3 frames" in windowed.stdout, windowed

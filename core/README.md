@@ -56,13 +56,12 @@ RFB engine, print the first framebuffer size, close the session, and exit.
 authentication, provide `SCRCTL_USERNAME` and `SCRCTL_PASSWORD` in the environment.
 
 The loopback CLI test checks RFB 3.8 and Apple RFB 3.889 negotiation, first
-frame, and clean disconnect. Pass the path to the original C++ executable to
-the parity test to compare legacy output and exit codes.
+frame, and clean disconnect. The CLI contract test checks the installed iOS frontend.
 
 ```sh
 cargo build --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl --locked
 python3 core/tests/cli_targets.py core/target/debug/scrctl
-SCRCTL_TEST_NATIVE_OPTIONS=1 python3 core/tests/cli_parity.py /path/to/legacy/scrctl /path/to/sdl3/scrctl
+python3 core/tests/cli_contract.py /path/to/installed/scrctl
 ```
 
 ## Optional XDB GUI bindings
@@ -224,22 +223,17 @@ Normal Rust playback links the FFmpeg libraries directly.
 
 Set `SCRCTL_TEST_HW_DECODE=1` to include the macOS hardware playback checks.
 
-### Local macOS installation candidate
+### Native CLI installation
 
-Use a separate install prefix. The CMake package installs the Rust binary
-as `scrctl`, fixes its runtime library references and signs the executable
-and bundled libraries locally. The C++ comparison executable stays in the
-build directory.
+CMake builds the Rust CLI with SDL3 and FFmpeg and installs it as `bin/scrctl`.
+Use a separate prefix on macOS for the bundled dylibs and local signatures.
 
 ```sh
-cmake -S . -B build-candidate -DSCRCTL_BUILD_RUST_FRONTEND=ON
-cmake --build build-candidate
-cmake --install build-candidate --prefix "$PWD/dist-candidate"
-python3 tools/test_macos_install.py dist-candidate build-candidate
+cmake -S . -B build
+cmake --build build
+cmake --install build --prefix "$PWD/dist"
+python3 tools/test_macos_install.py dist
 ```
 
-The same CMake option works on Linux and Windows with their native toolchains.
-Linux uses system SDL3 and FFmpeg and installs the bundled XDB client under
-`bin/lib`. Windows resolves the executable's DLL dependencies using the
-native toolchain directories. If using a prebuilt binary, pass its absolute
-path in `SCRCTL_RUST_FRONTEND` instead.
+Linux uses system SDL3 and FFmpeg and installs the XDB client under `bin/lib`.
+Windows scans the executable's imports to bundle the matching native DLLs.

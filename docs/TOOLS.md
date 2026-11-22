@@ -1,5 +1,9 @@
 # 开发诊断与归档实验
 
+当前版本用 Rust 构建 CLI。构建和安装见[使用指南](USER_GUIDE.zh-CN.md)，
+本地 Rust 与 XDB 回环命令见 [core README](../core/README.md)。
+下文保留原 C++ 前端时代的诊断工具和实验记录；其中 CMake 开关与构建命令对应历史提交。
+
 普通使用从 `scrctl --help` 开始。设备列表、应用列表与启动、剪贴板、统计和录制
 已在主程序中提供，分别使用 `--list-devices`、`--list-apps`、`--start-app`、
 `--copy` / `--paste`、`--stats` 和 `--record`。

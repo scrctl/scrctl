@@ -131,11 +131,11 @@ iPadOS 18.7.8 的 iPad mini 5 已有截图轮询与控制记录，但设备拒�
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS 构建依赖：
-brew install cmake sdl2-compat ffmpeg pkgconf gettext
+brew install cmake rust sdl3 ffmpeg pkgconf
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
-./build/scrctl --help
+cmake --install build --prefix dist
+./dist/bin/scrctl --help
 ```
 
 scrctl 只构建固定版本的 XDB 客户端库，Server 需要单独安装。

@@ -4,30 +4,27 @@
 
 ```bash
 git submodule update --init --recursive
-brew install sdl2 ffmpeg pkg-config gettext
+brew install cmake rust sdl3 ffmpeg pkg-config
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-ctest --test-dir build --output-on-failure
 cmake --install build --prefix dist-macos
 python3 tools/record_macos_package.py dist-macos --source-commit "$(git rev-parse HEAD)"
 ffmpeg -version > dist-macos/share/doc/scrctl/ffmpeg-build.txt
-python3 tools/test_macos_install.py dist-macos build
+python3 tools/test_macos_install.py dist-macos
 ```
 
-安装目录包含 `bin/scrctl`、`bin/lib` 的非系统 dylib、`share/locale` 的翻译与
+安装目录包含 `bin/scrctl`、`bin/lib` 的非系统 dylib、以及
 `share/doc/scrctl` 的许可和构建记录。整体保留目录结构即可移动，运行
 `./dist-macos/bin/scrctl --help`。默认语言为 `auto`，根据 `LC_ALL`、`LC_MESSAGES`、
 `LANG` 的优先级选择中文或英文，也可用 `--lang en` 或 `--lang zh-CN` 指定。
 
 CMake 的 `BundleUtilities` 在安装阶段递归收集链接依赖、改写 install name、移除
 构建和 Homebrew rpath，并验证依赖闭包。安装前缀需要使用单独目录；`bin` 中含有
-其他程序时会拒绝打包。Homebrew 的 `sdl2-compat` 通过 `dlopen`
-加载 SDL3，因此额外安装这个运行时。所有 Mach-O 副本随后进行 ad hoc 签名；系统库
-和 Homebrew 原件不会被修改。自定义、非 Homebrew 的 SDL 动态插件需要另行确认。
+其他程序时会拒绝打包。所有 Mach-O 副本随后进行 ad hoc 签名，系统库和 Homebrew
+原件保持原样。
 
-检查脚本将安装目录复制到带空格的新路径，临时隐藏构建目录的翻译，清除 dyld 与
-语言覆盖并限制 PATH。它检查包内签名、所有 install name、实际 dyld 加载路径、
-SDL3 动态加载、英文/中文/auto 与版本输出，退出时恢复构建目录。检查还使用 Apple
+检查脚本将安装目录复制到带空格的新路径，清除 dyld 与语言覆盖并限制 PATH。它检查包内签名、
+install name、实际 dyld 加载路径、英文/中文/auto 与版本输出。检查还使用 Apple
 `otool -l` 读取主程序和每个 dylib 的 `LC_BUILD_VERSION` 或旧版
 `LC_VERSION_MIN_MACOSX`；任一文件的最低系统版本高于当前 macOS 时直接失败，
 即使该文件碰巧能够运行到 `--help`。该检查不连接设备；

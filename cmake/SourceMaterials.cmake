@@ -36,7 +36,10 @@ function(scrctl_source_dependency name target detected_version declared_url decl
     string(JSON item SET "${item}" selection "${value}")
     foreach(property IN ITEMS INTERFACE_INCLUDE_DIRECTORIES IMPORTED_LOCATION IMPORTED_IMPLIB
             IMPORTED_LOCATION_RELEASE IMPORTED_IMPLIB_RELEASE)
-        get_target_property(paths "${target}" "${property}")
+        unset(paths)
+        if(TARGET "${target}")
+            get_target_property(paths "${target}" "${property}")
+        endif()
         set(values "[]")
         if(paths AND NOT paths MATCHES "-NOTFOUND$")
             foreach(path IN LISTS paths)
@@ -59,19 +62,11 @@ endfunction()
 scrctl_source_dependency(nlohmann_json nlohmann_json::nlohmann_json "${nlohmann_json_VERSION}"
     "https://codeload.github.com/nlohmann/json/tar.gz/refs/tags/v3.12.0"
     "SHA256=4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187")
-scrctl_source_dependency(cli11 CLI11::CLI11 "${CLI11_VERSION}"
-    "https://codeload.github.com/CLIUtils/CLI11/tar.gz/refs/tags/v2.5.0"
-    "SHA256=17e02b4cddc2fa348e5dbdbb582c59a3486fa2b2433e70a0c3bacb871334fd55")
 execute_process(COMMAND git -C "${PROJECT_SOURCE_DIR}/xdb" rev-parse HEAD
     OUTPUT_VARIABLE SCRCTL_XDB_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
 get_target_property(SCRCTL_XDB_VERSION xdb_client VERSION)
 scrctl_source_dependency(xdb xdb_client "${SCRCTL_XDB_VERSION}"
     "https://github.com/scrctl/XDeviceBridge.git" "${SCRCTL_XDB_REVISION}")
-if(SCRCTL_FETCH_SDL2)
-    scrctl_source_dependency(sdl2 SDL2::SDL2 "${SDL_VERSION}"
-        "https://github.com/libsdl-org/SDL.git" "release-2.32.10")
-endif()
-
 get_property(dependencies GLOBAL PROPERTY SCRCTL_SOURCE_MATERIAL_DEPENDENCIES)
 set(manifest "{\"schema_version\":1}")
 string(JSON manifest SET "${manifest}" dependencies "${dependencies}")

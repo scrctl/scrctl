@@ -10,11 +10,13 @@ permissions:
 jobs:
   verify:
     uses: ./.github/workflows/offline-selftest.yml
+  verify-native:
+    uses: ./.github/workflows/rust-install.yml
   notarize:
     uses: ./.github/workflows/macos-notarize.yml
     secrets: inherit
   publish:
-    needs: [verify, notarize]
+    needs: [verify, verify-native, notarize]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

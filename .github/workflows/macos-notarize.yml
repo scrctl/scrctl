@@ -41,16 +41,14 @@ jobs:
               raise SystemExit('Tag must match the CMake project version exactly')
           PYTAG
       - name: Install dependencies
-        run: brew install sdl2 sdl3 ffmpeg pkg-config gettext
-      - name: Build and test
+        run: brew install sdl3 ffmpeg pkg-config
+      - name: Build and install
         run: |
           rustup update stable
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON \
-            -DCMAKE_DISABLE_FIND_PACKAGE_CLI11=ON
+            -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON
           cmake --build build --parallel 3
-          ctest --test-dir build --output-on-failure
           cmake --install build --prefix dist-macos
           test ! -e dist-macos/bin/scrctl-legacy
       - name: Developer ID signing
@@ -69,7 +67,7 @@ jobs:
           HOMEBREW_DEVELOPER=1 HOMEBREW_NO_AUTO_UPDATE=1 brew ruby tools/collect_macos_sources.rb dist-macos sources-macos/homebrew
           python3 tools/collect_embedded_sources.py build sources-macos/embedded
           python3 tools/package_source_materials.py dist-macos build sources-macos --platform macos
-          python3 tools/test_macos_install.py dist-macos build
+          python3 tools/test_macos_install.py dist-macos
       - name: Submit ZIP to Apple
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}

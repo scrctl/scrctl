@@ -1,6 +1,5 @@
 # BundleUtilities 在安装阶段扫描、复制并修复 Mach-O 依赖；独立 CLI 的 bundle
 # 根就是 bin，所以库放在 bin/lib，避免它的安全检查拒绝修改根目录外的文件。
-target_link_options(scrctl PRIVATE "-Wl,-headerpad_max_install_names")
 install(CODE [[
     # --prefix dist-macos 会保留相对路径；BundleUtilities 的已解析依赖使用
     # 绝对路径，安全边界比较要求 executable 根也一致。安装阶段再标准化，
@@ -21,29 +20,9 @@ install(CODE [[
         message(FATAL_ERROR "Refusing to fix existing libraries without scrctl package provenance: ${scrctl_root}/bin/lib")
     endif()
 ]])
-if(SCRCTL_RUST_FRONTEND)
-    install(PROGRAMS "${SCRCTL_RUST_FRONTEND}" DESTINATION bin RENAME scrctl)
-else()
-    install(TARGETS scrctl RUNTIME DESTINATION bin)
-endif()
-
-# Homebrew 的 sdl2 可能指向 sdl2-compat；它通过 dlopen 而非链接加载 SDL3。
-# 这种依赖不会出现在 otool -L 中，必须按上游的 @loader_path/libSDL3.dylib
-# 搜索规则显式安装，再让 BundleUtilities 递归处理 SDL3 本身的依赖。
+install(PROGRAMS "${SCRCTL_EXECUTABLE}" DESTINATION bin RENAME scrctl)
 install(CODE "set(scrctl_xdb_origin \"$<TARGET_FILE:xdb_client>\")")
 install(CODE "set(scrctl_xdb_name \"$<TARGET_SONAME_FILE_NAME:xdb_client>\")")
-set(scrctl_sdl3_runtime "")
-if(NOT SCRCTL_RUST_FRONTEND AND SDL2_DIR)
-    get_filename_component(scrctl_sdl2_config "${SDL2_DIR}" REALPATH)
-    if(scrctl_sdl2_config MATCHES "/sdl2-compat/")
-        find_package(SDL3 REQUIRED CONFIG)
-        set(scrctl_sdl3_runtime "$<TARGET_FILE:SDL3::SDL3>")
-    endif()
-endif()
-
-# 这里只写安装脚本，不在 configure 阶段加载 BundleUtilities。保留原始库路径，
-# 供产物元数据记录实际使用的 Homebrew keg、版本与许可文件。
-install(CODE "set(scrctl_sdl3_origin \"${scrctl_sdl3_runtime}\")")
 install(CODE [[
     include(BundleUtilities)
     set(BU_CHMOD_BUNDLE_ITEMS ON)
@@ -57,14 +36,6 @@ install(CODE [[
     file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/bin/lib" TYPE FILE FILES "${scrctl_xdb_origin}" RENAME "${scrctl_xdb_name}")
     list(APPEND scrctl_plugins "${scrctl_root}/bin/lib/${scrctl_xdb_name}")
     file(MAKE_DIRECTORY "${scrctl_root}/bin/lib" "${scrctl_root}/share/doc/scrctl")
-    if(scrctl_sdl3_origin)
-        # Imported target 的路径也可能是 Homebrew 前缀中的符号链接，必须复制
-        # realpath 的内容，避免安装一个指回包外 Cellar 的失效链接。
-        get_filename_component(scrctl_sdl3_origin "${scrctl_sdl3_origin}" REALPATH)
-        file(INSTALL DESTINATION "${CMAKE_INSTALL_PREFIX}/bin/lib" TYPE FILE
-            FILES "${scrctl_sdl3_origin}" RENAME libSDL3.dylib)
-        list(APPEND scrctl_plugins "${scrctl_root}/bin/lib/libSDL3.dylib")
-    endif()
     get_bundle_keys("${scrctl_exe}" "${scrctl_plugins}" "${scrctl_root}/bin/lib" scrctl_keys)
     set(scrctl_origins "library\toriginal_path\n")
     foreach(scrctl_key IN LISTS scrctl_keys)
@@ -82,9 +53,6 @@ install(CODE [[
                 endforeach()
             endif()
             get_filename_component(scrctl_origin "${scrctl_origin}" REALPATH)
-            if(scrctl_name STREQUAL "libSDL3.dylib" AND scrctl_sdl3_origin)
-                get_filename_component(scrctl_origin "${scrctl_sdl3_origin}" REALPATH)
-            endif()
             string(APPEND scrctl_origins "${scrctl_name}\t${scrctl_origin}\n")
         endif()
     endforeach()

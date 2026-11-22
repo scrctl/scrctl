@@ -6,26 +6,11 @@ endif()
 get_filename_component(scrctl_compiler_bindir "${CMAKE_CXX_COMPILER}" DIRECTORY)
 set(SCRCTL_RUNTIME_DLL_DIRS "${scrctl_compiler_bindir}" CACHE STRING
     "Windows DLL search directories for installation")
-if(SCRCTL_RUST_FRONTEND)
-    get_filename_component(scrctl_rust_filename "${SCRCTL_RUST_FRONTEND}" NAME)
-    if(NOT scrctl_rust_filename STREQUAL "scrctl.exe")
-        message(FATAL_ERROR "The Rust Windows candidate must be named scrctl.exe")
-    endif()
-    list(PREPEND SCRCTL_RUNTIME_DLL_DIRS "$<TARGET_FILE_DIR:xdb_client>")
-    add_executable(scrctl_rust_candidate IMPORTED)
-    set_target_properties(scrctl_rust_candidate PROPERTIES IMPORTED_LOCATION "${SCRCTL_RUST_FRONTEND}")
-    install(IMPORTED_RUNTIME_ARTIFACTS scrctl_rust_candidate
-        RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
-else()
-    install(TARGETS scrctl RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
-endif()
-
-# sdl2-compat 在运行时主动加载 SDL3，PE 导入表里没有这项依赖。
-if(NOT SCRCTL_RUST_FRONTEND AND NOT SCRCTL_FETCH_SDL2 AND SDL2_LIBDIR AND EXISTS "${SDL2_LIBDIR}/pkgconfig/sdl2-compat.pc")
-    find_package(SDL3 REQUIRED CONFIG HINTS "${SDL2_LIBDIR}/cmake/SDL3")
-    install(IMPORTED_RUNTIME_ARTIFACTS SDL3::SDL3-shared
-        RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
-endif()
+list(PREPEND SCRCTL_RUNTIME_DLL_DIRS "$<TARGET_FILE_DIR:xdb_client>")
+add_executable(scrctl_package IMPORTED)
+set_target_properties(scrctl_package PROPERTIES IMPORTED_LOCATION "${SCRCTL_EXECUTABLE}")
+install(IMPORTED_RUNTIME_ARTIFACTS scrctl_package
+    RUNTIME_DEPENDENCY_SET scrctl_runtime RUNTIME DESTINATION bin)
 
 install(RUNTIME_DEPENDENCY_SET scrctl_runtime
     DIRECTORIES ${SCRCTL_RUNTIME_DLL_DIRS}

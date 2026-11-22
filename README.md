@@ -148,11 +148,11 @@ The CLI language remains locale-based (`--lang auto`); `--lang en` or
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS prerequisites:
-brew install cmake sdl2-compat ffmpeg pkgconf gettext
+brew install cmake rust sdl3 ffmpeg pkgconf
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
-./build/scrctl --help
+cmake --install build --prefix dist
+./dist/bin/scrctl --help
 ```
 
 Building scrctl builds only the pinned XDB client library. Install the `xdb`

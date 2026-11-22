@@ -130,13 +130,13 @@ def collect(build_directory, output_directory):
         (temporary / "rebuild-overrides.json").write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
         (temporary / "README.txt").write_text(
             "Extract each NAME-source.tar into the same directory.\n"
-            "Configure the delivered project with -DSCRCTL_FETCH_DEPENDENCIES=OFF and\n"
+            "Configure the delivered project with -DXDB_FETCH_DEPENDENCIES=OFF and\n"
             "the -DFETCHCONTENT_SOURCE_DIR_NAME=/absolute/path/to/NAME entries listed\n"
             "in rebuild-overrides.json. Preserve the original CMake build options;\n"
             "system packages and the compiler are supplied by the platform build recipe.\n"
-            "To force the exported JSON/CLI11/xdb trees rather than installed packages,\n"
-            "also set -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON,\n"
-            "-DCMAKE_DISABLE_FIND_PACKAGE_CLI11=ON; xdb is the pinned source submodule.\n",
+            "To force the exported JSON tree rather than a system package,\n"
+            "also set -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON.\n"
+            "xdb is the pinned source submodule. Rust dependencies are pinned by Cargo.lock.\n",
             encoding="utf-8")
         if output_directory.exists():
             output_directory.rmdir()

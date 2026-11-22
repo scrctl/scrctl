@@ -193,24 +193,21 @@ Use a Git checkout with submodules. The server is built and installed separately
 git clone --recurse-submodules https://github.com/scrctl/scrctl.git
 cd scrctl
 # macOS
-brew install cmake sdl2-compat ffmpeg pkgconf gettext
+brew install cmake rust sdl3 ffmpeg pkgconf
 # Debian / Ubuntu instead:
-# sudo apt install build-essential cmake pkg-config gettext python3 libsdl2-dev \
-#   libavcodec-dev libavutil-dev libswscale-dev
+# sudo apt install build-essential cmake clang libclang-dev pkg-config libsdl3-dev \
+#   libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel 4
-ctest --test-dir build --output-on-failure
 ```
 
 Windows builds use MSYS2 CLANG64 (x64) or CLANGARM64 (ARM64), with the matching
-CMake, compiler, SDL2, FFmpeg, gettext and Python packages; see the exact
-[CI recipe](../.github/workflows/offline-selftest.yml).
+Rust, CMake, compiler, SDL 3.4+ and FFmpeg packages; see the
+[CI recipe](../.github/workflows/rust-install.yml).
 
-Missing JSON/CLI11 dependencies are downloaded from pinned sources by default.
-For offline builds, set `SCRCTL_FETCH_DEPENDENCIES=OFF` and supply installed packages
-or `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` / `FETCHCONTENT_SOURCE_DIR_CLI11`.
-`SCRCTL_LIBAV=OFF` disables local FFmpeg file playback, and
-`SCRCTL_BUILD_TESTS=OFF` disables frontend tests. Live decoding remains in xdb.
+For an offline XDB client build, set `XDB_FETCH_DEPENDENCIES=OFF` and provide
+nlohmann/json from an installed package or `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON`.
+Use the locked Cargo dependencies. Live device media is decoded by XDB.
 
 Runtime archives include corresponding source deliveries, dependency recipes,
 patches and checksums. Check the shipped FFmpeg configuration and licenses;

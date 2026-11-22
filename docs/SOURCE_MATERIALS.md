@@ -55,7 +55,7 @@ SHA256 为 `4c95b0b5f2066c387f51fe266258a71b5e2b3962f72c660fbf558546ed06f45b`。
   源码收集工具和许可证；子模块由 embedded 中的固定源码单独覆盖。
 - `build/`：实际依赖版本、库来源与哈希、FFmpeg 构建选项、CMakeCache、
   compile_commands 和 CI 工作流。缓存和命令中的绝对路径来自构建机，重建时应替换。
-- `embedded/`：CMake 本次实际选择的 JSON、CLI11、XDeviceBridge 客户端源码树，
+- `embedded/`：CMake 本次实际选择的 JSON 和 XDeviceBridge 客户端源码树，
   包括许可证、上游构建文件、每个源码归档及内部文件的哈希。安装包 CI 强制使用固定
   FetchContent 源，避免将系统包版本和固定下载版本混淆。本地源码覆盖导出的是实际
   覆盖目录，清单中的默认 URL 不作为覆盖源码身份的证明。
@@ -91,11 +91,11 @@ Ubuntu CI 当前没有发布独立 Linux 安装包，因此不生成 Linux 分�
    Homebrew 目录记录配方执行所用 Homebrew 版本和提交，提供缓存恢复方法；MSYS2
    source package 可解开后用 `makepkg-mingw` 按原 PKGBUILD 构建。不要将下载的
    未核验配方当作管理员脚本运行。
-4. 配置 scrctl 时设置 `-DSCRCTL_FETCH_DEPENDENCIES=OFF`，按
+4. 配置 scrctl 时设置 `-DXDB_FETCH_DEPENDENCIES=OFF`，按
    `embedded/rebuild-overrides.json` 指向解开的源码目录，同时保留原 CMake 选项。
-   为使用这些源码，设置 `CMAKE_DISABLE_FIND_PACKAGE_nlohmann_json`、
-   `CMAKE_DISABLE_FIND_PACKAGE_CLI11`、`CMAKE_DISABLE_FIND_PACKAGE_pugixml` 为 `ON`。
-5. 执行 `cmake --build`；安装时保留翻译和运行库闭包。macOS install name 改写与
+   使用归档的 JSON 源码时设置 `CMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON`。
+   Rust 依赖版本以 `core/Cargo.lock` 为准。
+5. 执行 `cmake --build`；安装时保留运行库闭包。macOS install name 改写与
    ad hoc 签名步骤、Windows DLL 复制步骤在交付的 CMake 脚本和 CI 工作流内。
 
 ## 本地生成

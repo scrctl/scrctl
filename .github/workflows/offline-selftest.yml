@@ -1,6 +1,5 @@
 # 构建并运行前端及 xdb 协议接入的无设备回归；设备后端在 xdb 仓库验证。
 # 真机测试另外运行，避免 CI 依赖设备在线或占用同一设备的媒体会话。
-# 测试项以 ctest -N 为准；未配置录制码流时，不注册需要该输入的测试。
 name: offline-selftest
 
 on:
@@ -11,7 +10,7 @@ on:
   workflow_call:
 
 jobs:
-  ctest:
+  unix:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
@@ -39,36 +38,27 @@ jobs:
       - name: 装依赖（macOS）
         if: runner.os == 'macOS'
         # 前端依赖；设备服务由独立的 xdb Server 提供。
-        run: brew install sdl2 sdl3 ffmpeg pkg-config gettext
+        run: brew install sdl3 ffmpeg pkg-config
 
       - name: 装依赖（Linux）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake clang libclang-dev pkg-config gettext python3 libsdl2-dev libsdl3-dev \
+            cmake clang libclang-dev pkg-config python3 libsdl3-dev \
             libavformat-dev libavcodec-dev libavutil-dev libswscale-dev
 
       - name: 配置
         # 不指定 -G：默认生成器总归在，而 Ninja 是否预装是 runner 镜像的事。
         run: |
           rustup update stable
-          cmake -B build -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON \
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON \
-            -DCMAKE_DISABLE_FIND_PACKAGE_CLI11=ON
+            -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON
 
       - name: 构建
         # Make 生成器下，无数值的 --parallel 会传入无上限的 -j。
         run: cmake --build build --parallel ${{ matrix.build_jobs }}
-
-      # 链接成功不等于跑得起来：这一步只证明可执行文件在自己的平台上能起。
-      # `--help` 在 SDL 初始化之前就到点了，所以无显示环境的 runner 也不需要屏幕。
-      - name: 可执行文件冒烟
-        run: ./build/scrctl --help >/dev/null
-
-      - name: 离线自检
-        run: ctest --test-dir build --output-on-failure
 
       - name: 打包工具离线回归
         run: |
@@ -107,15 +97,7 @@ jobs:
 
       - name: 检查搬移后的 macOS 安装包
         if: runner.os == 'macOS'
-        run: python3 tools/test_macos_install.py dist-macos build
-
-      - name: 上传测试日志
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: ${{ runner.os == 'macOS' && 'macos-test-logs' || 'linux-test-logs' }}
-          path: build/Testing/Temporary/*.log
-          if-no-files-found: ignore
+        run: python3 tools/test_macos_install.py dist-macos
 
       # tar 保留可执行权限和依赖符号链接，upload-artifact 的裸目录不会保留权限。
       - name: 归档 macOS 安装包
@@ -167,10 +149,8 @@ jobs:
             ${{ matrix.package_prefix }}-clang
             ${{ matrix.package_prefix }}-cmake
             ${{ matrix.package_prefix }}-ninja
-            ${{ matrix.package_prefix }}-gettext-tools
             ${{ matrix.package_prefix }}-rust
             ${{ matrix.arch == 'x64' && 'mingw-w64-clang-x86_64-nasm' || '' }}
-            ${{ matrix.package_prefix }}-SDL2
             ${{ matrix.package_prefix }}-sdl3
             ${{ matrix.package_prefix }}-python
             ${{ matrix.package_prefix }}-pkgconf
@@ -208,11 +188,10 @@ jobs:
           python -m unittest discover -s tests -p test_package_source_materials.py -v
       - name: 配置
         run: >-
-          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DSCRCTL_BUILD_RUST_FRONTEND=ON
+          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
           -DCMAKE_DISABLE_FIND_PACKAGE_nlohmann_json=ON
-          -DCMAKE_DISABLE_FIND_PACKAGE_CLI11=ON
       - name: 构建
         run: |
           export LIBCLANG_PATH="$(cygpath -aw "$MINGW_PREFIX/bin")"
@@ -220,10 +199,6 @@ jobs:
             export BINDGEN_EXTRA_CLANG_ARGS="${BINDGEN_EXTRA_CLANG_ARGS:+$BINDGEN_EXTRA_CLANG_ARGS }-D__X86INTRIN_H"
           fi
           cmake --build build-win --parallel 4
-      - name: 可执行文件启动
-        run: ./build-win/scrctl.exe --help > /dev/null
-      - name: 离线自检
-        run: ctest --test-dir build-win --output-on-failure
       - name: 安装产物和依赖记录
         run: |
           cmake --install build-win --prefix dist-win
@@ -250,52 +225,20 @@ jobs:
       - name: 检查独立安装目录
         timeout-minutes: 2
         shell: pwsh
-        run: ./tools/test_windows_install.ps1 -InstallDirectory dist-win -BuildDirectory build-win
-      - name: 上传测试日志
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: windows-${{ matrix.arch }}-test-logs
-          path: build-win/Testing/Temporary/*.log
-          if-no-files-found: ignore
+        run: ./tools/test_windows_install.ps1 -InstallDirectory dist-win
       - name: 上传 Windows ${{ matrix.label }} 产物
         uses: actions/upload-artifact@v7.0.2
         with:
           name: scrctl-windows-${{ matrix.arch }}
           path: dist-win/
 
-  # 使用同一批离线用例检查字节缓冲访问、未对齐访问及其他未定义行为。
-  sanitizer:
-    name: ASan + UBSan
-    runs-on: macos-latest
-    # 最近一次完整作业耗时 19 分钟；为新增发现模块和依赖下载保留构建余量。
+  rust-workspace:
+    name: Rust workspace
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.1
-        with:
-          submodules: recursive
-
-      - name: 装依赖
-        run: brew install sdl2 ffmpeg pkg-config gettext
-
-      - name: 配置（Debug + 两个 sanitizer）
-        run: >
-          cmake -B build-san -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"
-          -DOPENSSL_ROOT_DIR="$(brew --prefix openssl)"
-
-      - name: 构建
-        run: cmake --build build-san --parallel 3
-
-      - name: 离线自检
-        env:
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: ctest --test-dir build-san --output-on-failure
-
-      - name: 上传 sanitizer 测试日志
-        if: always()
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: sanitizer-test-logs
-          path: build-san/Testing/Temporary/*.log
-          if-no-files-found: ignore
+      - name: Rust workspace tests
+        run: |
+          rustup update stable
+          cargo test --manifest-path core/Cargo.toml --workspace --locked
