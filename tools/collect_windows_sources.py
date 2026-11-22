@@ -22,6 +22,16 @@ import urllib.request
 
 
 SOURCE_REPOSITORY = "https://mirror.msys2.org/mingw/sources/"
+# MSYS2 briefly added an openssl-3 build dependency, then reverted it without
+# changing pkgrel. Both revisions declare identical source inputs and checksums.
+# Only supplement this known binary/archived recipe pair.
+RECIPE_OVERRIDES = {
+    ("mingw-w64-ngtcp2", "1.26.0-3",
+     "e0b9dd96ad451722cab78354a35eeadcf83c7a7aaed1adb658ec89689fe0ac1d"): (
+        "60a51a9798101918d53da520eedad57d8fb3806db8f0e4590d89459904c2cfea",
+        "f6fe8c6a81c3f6e51c900d9b0ceb4bf87f615b17",
+    ),
+}
 TAR = "bsdtar" if os.name == "nt" else (shutil.which("bsdtar") or "tar")
 
 
@@ -230,6 +240,14 @@ def source_filename(source):
     return filename
 
 
+class RecipeMismatch(RuntimeError):
+    def __init__(self, actual, expected):
+        super().__init__(
+            f"Source PKGBUILD differs from binary .BUILDINFO recipe hash: {actual} != {expected}"
+        )
+        self.actual = actual
+
+
 def inspect_archive(archive, base, version, expected_recipe_hash=None, reader=archive_read,
                     members_reader=archive_members, hash_reader=archive_digest):
     members = members_reader(archive)
@@ -239,7 +257,7 @@ def inspect_archive(archive, base, version, expected_recipe_hash=None, reader=ar
         raise RuntimeError("Source package is missing PKGBUILD or .SRCINFO")
     recipe_hash = hashlib.sha256(reader(archive, recipe)).hexdigest()
     if expected_recipe_hash and recipe_hash != expected_recipe_hash:
-        raise RuntimeError("Source PKGBUILD differs from binary .BUILDINFO recipe hash")
+        raise RecipeMismatch(recipe_hash, expected_recipe_hash)
     fields = parse_srcinfo(reader(archive, srcinfo).decode("utf-8"))
     try:
         actual = fields["pkgver"][0] + "-" + fields["pkgrel"][0]
@@ -345,11 +363,41 @@ def collect(metadata_path, output_directory, jobs=4, fetch=download, verifier=ve
                            if packages[owner].get("pkgbuild_sha256")}
         if len(expected_hashes) > 1:
             raise RuntimeError(f"Conflicting binary recipe hashes for {base} {version}")
-        contents = inspector(archive, base, version, next(iter(expected_hashes), None))
+        expected_hash = next(iter(expected_hashes), None)
+        material = [archive, signature]
+        try:
+            try:
+                contents = inspector(archive, base, version, expected_hash)
+            except RecipeMismatch as mismatch:
+                override = RECIPE_OVERRIDES.get((base, version, expected_hash))
+                if override is None or override[0] != mismatch.actual:
+                    raise
+                archived_hash, revision = override
+                contents = inspector(archive, base, version, archived_hash)
+                exact_recipe = directory / "PKGBUILD.binary"
+                recipe_url = f"https://raw.githubusercontent.com/msys2/MINGW-packages/{revision}/{base}/PKGBUILD"
+                if not exact_recipe.exists():
+                    fetch(recipe_url, exact_recipe)
+                if digest(exact_recipe) != expected_hash:
+                    raise RuntimeError("Pinned PKGBUILD differs from binary .BUILDINFO recipe hash")
+                material.append(exact_recipe)
+                contents.update(
+                    pkgbuild_sha256=expected_hash,
+                    archived_pkgbuild_sha256=archived_hash,
+                    recipe_binding="binary-buildinfo-sha256-pinned-recipe",
+                    recipe_override={
+                        "url": recipe_url,
+                        "path": exact_recipe.relative_to(output).as_posix(),
+                        "rebuild": "Replace the extracted PKGBUILD with this file before building.",
+                    },
+                )
+        except RuntimeError as error:
+            raise RuntimeError(f"{base} {version}: {error}") from error
         verification_file = directory / "signature-verification.txt"
         verification_file.write_text(verification, encoding="utf-8")
+        material.append(verification_file)
         files = [{"path": file.relative_to(output).as_posix(), "sha256": digest(file)}
-                 for file in (archive, signature, verification_file)]
+                 for file in material]
         record = {"package_base": base, "version": version, "archive_url": url,
                   "signature_url": url + ".sig", "files": files, **contents}
         print(f"Collected {base} {version} ({len(group_owners)} bundled package owners)", flush=True)
@@ -365,6 +413,7 @@ def collect(metadata_path, output_directory, jobs=4, fetch=download, verifier=ve
                 "scope": "Exact MSYS2 base/version source archives, authenticated with the CI pacman "
                          "keyring; bundled DLL hashes remain bound by package-metadata.json. "
                          "Cached binary BUILDINFO recipe hashes are compared when present. "
+                         "A recorded recipe override restores the exact binary recipe before rebuilding. "
                          "This is source delivery, not a bit-for-bit rebuild claim.",
                 "build": "Extract a source archive, enter its package directory using the MSYS2 toolchain matching the recorded package owners, "
                          "install the PKGBUILD build dependencies, and run makepkg-mingw. "

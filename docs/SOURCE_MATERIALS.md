@@ -70,7 +70,9 @@ SHA256 为 `4c95b0b5f2066c387f51fe266258a71b5e2b3962f72c660fbf558546ed06f45b`。
 
 Windows 若原工具链缓存仍有对应二进制包，会进一步比对包中 DLL 字节并记录
 `.BUILDINFO` 的 PKGBUILD 哈希；`recipe_binding` 会区分这一检查与仅根据精确
-pkgbase/版本匹配。声明 SKIP 的 VCS 输入依赖签名源码包的快照，清单保留这一边界，
+pkgbase/版本匹配。若清单有 `recipe_override`，先解开归档，再用该记录指向的
+`PKGBUILD.binary` 替换其中的 PKGBUILD。替换配方来自固定的 MSYS2 上游提交，
+且哈希必须与二进制的 `.BUILDINFO` 相同。声明 SKIP 的 VCS 输入依赖签名源码包的快照，清单保留这一边界，
 不把它描述成通过上游内容校验。
 Git 输入声明了非 SKIP 校验值时，按 makepkg 的 `git archive --format=tar`
 方式核对声明的 tag/commit；校验过程只读取包中的对象和引用，不运行仓库配置、

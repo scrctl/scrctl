@@ -194,6 +194,40 @@ class CollectionTest(unittest.TestCase):
         for material in result["packages"]["owner-one"]["files"]:
             self.assertEqual(material["sha256"], module.digest(self.output / material["path"]))
 
+    def test_known_recipe_override_requires_both_exact_hashes(self):
+        exact_recipe = b"binary recipe"
+        expected = hashlib.sha256(exact_recipe).hexdigest()
+        archived = hashlib.sha256(b"original recipe").hexdigest()
+        for package in self.data["msys2_packages"].values():
+            package["pkgbuild_sha256"] = expected
+        self.write_metadata()
+        override_key = ("mingw-w64-test", "1.0-1", expected)
+
+        def fetch(url, path):
+            if url.endswith("/PKGBUILD"):
+                path.write_bytes(exact_recipe)
+            else:
+                self.fetch(url, path)
+
+        with patch.object(module, "RECIPE_OVERRIDES", {override_key: (archived, "a" * 40)}):
+            result = module.collect(self.metadata, self.output, fetch=fetch,
+                                    verifier=lambda *args: "trusted test signer")
+            record = result["packages"]["owner-one"]
+            self.assertEqual(record["pkgbuild_sha256"], expected)
+            self.assertEqual(record["archived_pkgbuild_sha256"], archived)
+            recipe = self.output / record["recipe_override"]["path"]
+            self.assertEqual(recipe.read_bytes(), exact_recipe)
+            self.assertIn({"path": record["recipe_override"]["path"], "sha256": expected},
+                          record["files"])
+            recipe.write_bytes(b"corrupted recipe")
+            with self.assertRaisesRegex(RuntimeError, "Pinned PKGBUILD differs"):
+                self.collect()
+
+        with patch.object(module, "RECIPE_OVERRIDES", {override_key: ("0" * 64, "a" * 40)}):
+            with self.assertRaisesRegex(RuntimeError, "mingw-w64-test 1.0-1: Source PKGBUILD differs"):
+                self.collect()
+        self.assertFalse((self.output / "source-manifest.json").exists())
+
     def test_invalid_signature_does_not_leave_success_manifest(self):
         self.collect()
         def reject(*args):
