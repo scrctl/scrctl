@@ -58,24 +58,27 @@ async fn read_setup(server: &mut DuplexStream) -> Vec<i32> {
     server.read_exact(&mut set_pixel_format).await.unwrap();
     assert_eq!(set_pixel_format[0], 0);
 
-    let mut set_encodings = [0u8; 4];
-    server.read_exact(&mut set_encodings).await.unwrap();
-    assert_eq!(set_encodings[0], 2);
-    let count = u16::from_be_bytes([set_encodings[2], set_encodings[3]]);
-    let mut raw = vec![0u8; usize::from(count) * 4];
-    server.read_exact(&mut raw).await.unwrap();
-    let encodings = raw
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|id| i32::from_be_bytes([id[0], id[1], id[2], id[3]]))
-        .collect();
+    let encodings = read_encodings(server).await;
 
     let mut request = [0u8; 10];
     server.read_exact(&mut request).await.unwrap();
     assert_eq!(request[0], 3);
     assert_eq!(request[1], 0);
     encodings
+}
+
+async fn read_encodings(server: &mut DuplexStream) -> Vec<i32> {
+    let mut set_encodings = [0u8; 4];
+    server.read_exact(&mut set_encodings).await.unwrap();
+    assert_eq!(set_encodings[0], 2);
+    let count = u16::from_be_bytes([set_encodings[2], set_encodings[3]]);
+    let mut raw = vec![0u8; usize::from(count) * 4];
+    server.read_exact(&mut raw).await.unwrap();
+    raw.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|id| i32::from_be_bytes([id[0], id[1], id[2], id[3]]))
+        .collect()
 }
 
 fn raw_update() -> Vec<u8> {
@@ -1065,6 +1068,90 @@ async fn apple_handshake_with_init(server: &mut DuplexStream, init: Vec<u8>) {
     let mut apple = [0u8; 66];
     server.read_exact(&mut apple).await.unwrap();
     assert_eq!(apple[0], 0x21);
+}
+
+#[tokio::test]
+async fn quality_changes_refresh_the_viewport_without_reconnecting() {
+    timeout(Duration::from_secs(3), async {
+        for apple in [false, true] {
+            let (client, mut server) = duplex(4096);
+            let mut config = SessionConfig::new("mock", 5900);
+            config.apple_session = apple;
+            config.adaptive_dct = true;
+            let task = tokio::spawn(Session::connect_stream(client, config));
+            if apple {
+                perform_apple_handshake(&mut server).await;
+            } else {
+                perform_handshake(&mut server).await;
+            }
+            let dct = rfb_proto::encoding::Encoding::AppleAdaptiveDct.to_id();
+            assert_eq!(read_setup(&mut server).await.contains(&dct), apple);
+            let session = task.await.unwrap().unwrap();
+            assert_eq!(session.is_apple_remote(), apple);
+            assert!(!session.supports_file_upload());
+            assert!(!session.supports_file_download());
+            assert!(session.set_quality(10).await.is_err());
+
+            let mut request = [0; 10];
+            let viewport = Rect {
+                x: 1,
+                y: 1,
+                width: 1,
+                height: 1,
+            };
+            session.set_viewport(Some(viewport)).await.unwrap();
+            server.read_exact(&mut request).await.unwrap();
+            let refresh = [3, 0, 0, 1, 0, 1, 0, 1, 0, 1];
+            assert_eq!(request, refresh);
+
+            for level in [3, 6, 9] {
+                session.set_quality(level).await.unwrap();
+                let encodings = read_encodings(&mut server).await;
+                assert!(encodings.contains(&(i32::from(level) - 32)));
+                assert!(!encodings.contains(&dct));
+                assert_eq!(encodings[0], rfb_proto::encoding::Encoding::Tight.to_id());
+                assert!(encodings.contains(&rfb_proto::encoding::Encoding::Zrle.to_id()));
+                server.read_exact(&mut request).await.unwrap();
+                assert_eq!(request, refresh);
+            }
+            server.write_all(&raw_update()).await.unwrap();
+            while !matches!(session.next_event().await.unwrap(), Event::Frame { .. }) {}
+            server.read_exact(&mut request).await.unwrap();
+            assert_eq!(request, [3, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
+        }
+    })
+    .await
+    .expect("quality change and subsequent frame");
+}
+
+#[tokio::test]
+async fn apple_file_transfer_capabilities_are_directional() {
+    timeout(Duration::from_secs(3), async {
+        let common = (1 << 29) | (1 << 31);
+        let upload = 1 << 33;
+        let download = 1 << 49;
+        for (bits, can_upload, can_download) in [
+            (0, false, false),
+            (common, false, false),
+            (upload | download, false, false),
+            (common | upload, true, false),
+            (common | download, false, true),
+            (common | upload | download, true, true),
+        ] {
+            let (client, mut server) = duplex(4096);
+            let mut config = SessionConfig::new("mock", 5900);
+            config.apple_session = true;
+            let task = tokio::spawn(Session::connect_stream(client, config));
+            apple_handshake_with_init(&mut server, apple_server_init(bits)).await;
+            read_setup(&mut server).await;
+            let session = task.await.unwrap().unwrap();
+            assert!(session.is_apple_remote());
+            assert_eq!(session.supports_file_upload(), can_upload);
+            assert_eq!(session.supports_file_download(), can_download);
+        }
+    })
+    .await
+    .expect("Apple ServerInit capability handshake");
 }
 
 #[tokio::test]

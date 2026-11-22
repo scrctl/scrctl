@@ -85,6 +85,17 @@ and Kotlin from the same feature-enabled library used by your app.
 )
 ```
 
+- `RemoteSession.set_quality` applies a fixed Tight JPEG quality hint on
+  the current connection and requests a fresh update of the active viewport.
+  The GUI presets can pass 3, 6, and 9 for Low, Balanced, and High. Manual
+  selection prefers Tight, disables automatic adaptation, and stops
+  advertising Apple's adaptive DCT. The selected server and encoding determine whether the JPEG
+  hint affects the resulting picture.
+- `RemoteSession.is_apple_remote` reports negotiated RFB 3.889. The
+  `supports_file_upload` and `supports_file_download` methods independently
+  report the capabilities advertised during Apple ServerInit. Use these to
+  show the corresponding transfer actions.
+
 - `ios_list_devices` returns the XDB `devices` result JSON, including all
   candidates and discovery warnings. Select a non-empty UDID to open.
 - `IosSession.open` starts decoded video for the selected device over

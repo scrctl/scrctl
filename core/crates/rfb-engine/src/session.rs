@@ -51,8 +51,7 @@ const APPLE_CLIENT_VERSION: [u8; 66] = [
 /// JPEG quality pseudo-encoding is inserted per session, before these move
 /// on to pseudo-encodings.
 const BASE_ENCODINGS: [i32; 9] = [
-    // ZRLE is preferred over Tight: it is lossless and our Tight decoder does
-    // not yet handle libvncserver's compact-length/palette wire format.
+    // Prefer lossless ZRLE for the initial connection.
     Encoding::Zrle.to_id(),
     Encoding::Tight.to_id(),
     Encoding::Hextile.to_id(),
@@ -402,18 +401,50 @@ enum WriteCommand {
     Close,
 }
 
+/// Serializes display requests from the UI and the reader. Encoding changes
+/// and their refresh share a single writer command.
+struct FrameRequests {
+    viewport: Option<Rect>,
+    adaptive: Option<AdaptiveQuality>,
+    level: u8,
+    local_cursor: bool,
+    apple_session: bool,
+    offer_dct: bool,
+}
+
+impl FrameRequests {
+    fn advertised_encodings(&self, level: u8, offer_dct: bool) -> Vec<i32> {
+        encodings(self.local_cursor, level, self.apple_session, offer_dct)
+    }
+
+    fn request(&self, incremental: bool, (width, height): (u16, u16)) -> [u8; 10] {
+        let rect = self
+            .viewport
+            .and_then(|rect| clamp_rect(rect, width, height))
+            .unwrap_or(Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            });
+        framebuffer_update_request(incremental, rect.x, rect.y, rect.width, rect.height)
+    }
+}
+
 /// A connected RFB session.
 pub struct Session {
     commands: mpsc::Sender<WriteCommand>,
     events: AsyncMutex<mpsc::Receiver<Event>>,
     framebuffer: Arc<Mutex<Framebuffer>>,
-    viewport: Arc<Mutex<Option<Rect>>>,
+    frame_requests: Arc<AsyncMutex<FrameRequests>>,
     displays: Arc<Mutex<AppleDisplayState>>,
     input_key: Option<[u8; 16]>,
     apple_session: bool,
     /// The server advertised `serverCanReceivePasteboard` (feature bit 32), so
     /// clipboard text is sent as Apple message `0x1F` instead of ClientCutText.
     apple_pasteboard: bool,
+    file_upload: bool,
+    file_download: bool,
     supports_curtain_mode: bool,
     apple_clipboard_integration: bool,
     apple_client_version_sent: AtomicBool,
@@ -534,7 +565,17 @@ impl Session {
         let height = handshake.server_init.height;
         let name = handshake.server_init.name.clone();
         let framebuffer = Arc::new(Mutex::new(Framebuffer::new(width, height)));
-        let viewport = Arc::new(Mutex::new(None));
+        let frame_requests = Arc::new(AsyncMutex::new(FrameRequests {
+            viewport: None,
+            adaptive: Some(AdaptiveQuality::new(
+                config.quality,
+                std::time::Instant::now(),
+            )),
+            level: config.quality.min(9),
+            local_cursor: config.local_cursor && apple_session,
+            apple_session,
+            offer_dct: config.adaptive_dct && apple_session,
+        }));
         let displays = Arc::new(Mutex::new(AppleDisplayState::default()));
         let downloads = Arc::new(Mutex::new(HashMap::new()));
         let clipboard = Arc::new(Mutex::new(ClipboardState::default()));
@@ -577,10 +618,8 @@ impl Session {
             height,
             name.clone(),
             std::time::Duration::from_millis(u64::from(config.frame_interval_ms)),
-            viewport.clone(),
+            frame_requests.clone(),
             displays.clone(),
-            config.local_cursor && apple_session,
-            config.quality,
             apple_session,
             config.adaptive_dct && apple_session,
             bytes_read.clone(),
@@ -592,11 +631,21 @@ impl Session {
             commands: command_tx,
             events: AsyncMutex::new(event_rx),
             framebuffer,
-            viewport,
+            frame_requests,
             displays,
             input_key,
             apple_session,
             apple_pasteboard,
+            file_upload: apple_session
+                && handshake
+                    .server_init
+                    .apple_features
+                    .is_some_and(|features| features.supports_file_upload()),
+            file_download: apple_session
+                && handshake
+                    .server_init
+                    .apple_features
+                    .is_some_and(|features| features.supports_file_download()),
             supports_curtain_mode: apple_session
                 && handshake
                     .server_init
@@ -837,19 +886,62 @@ impl Session {
     /// the server for that region right away. `None` restores full-screen
     /// updates.
     pub async fn set_viewport(&self, rect: Option<Rect>) -> Result<(), SessionError> {
-        let Some((width, height)) = self.size() else {
-            return Err(SessionError::Closed);
-        };
+        let mut requests = self.frame_requests.lock().await;
+        let (width, height) = self.size().ok_or(SessionError::Closed)?;
         let rect = rect.and_then(|rect| clamp_rect(rect, width, height));
-        if let Ok(mut viewport) = self.viewport.lock() {
-            *viewport = rect;
+        let area = rect.unwrap_or(Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        });
+        self.send(
+            framebuffer_update_request(false, area.x, area.y, area.width, area.height).to_vec(),
+        )
+        .await?;
+        requests.viewport = rect;
+        Ok(())
+    }
+
+    /// Applies a fixed Tight JPEG quality in this session. It replaces
+    /// automatic quality adaptation and refreshes the current viewport.
+    pub async fn set_quality(&self, level: u8) -> Result<(), SessionError> {
+        if level > 9 {
+            return Err(SessionError::InvalidInput(
+                "Tight JPEG quality must be in 0..=9",
+            ));
         }
-        let (x, y, w, h) = match rect {
-            Some(rect) => (rect.x, rect.y, rect.width, rect.height),
-            None => (0, 0, width, height),
-        };
-        self.send(framebuffer_update_request(false, x, y, w, h).to_vec())
-            .await
+        let mut requests = self.frame_requests.lock().await;
+        let size = self.size().ok_or(SessionError::Closed)?;
+        // Tight quality hints don't control Apple's adaptive DCT. Stop
+        // offering it for manual presets, but keep its decoder usable for
+        // any update already in flight.
+        let mut encodings = requests.advertised_encodings(level, false);
+        // Prefer Tight for manual quality; lossless encodings ignore the hint.
+        let tight = encodings
+            .iter()
+            .position(|&id| id == Encoding::Tight.to_id())
+            .unwrap();
+        encodings[..=tight].rotate_right(1);
+        let mut packet = set_encodings(&encodings);
+        packet.extend_from_slice(&requests.request(false, size));
+        self.send(packet).await?;
+        requests.level = level;
+        requests.offer_dct = false;
+        requests.adaptive = None;
+        Ok(())
+    }
+
+    pub fn is_apple_remote(&self) -> bool {
+        self.apple_session
+    }
+
+    pub fn supports_file_upload(&self) -> bool {
+        self.file_upload
+    }
+
+    pub fn supports_file_download(&self) -> bool {
+        self.file_download
     }
 
     /// Sends Apple's client version/capability message (id 33). Screens sends
@@ -901,6 +993,7 @@ impl Session {
     }
 
     pub async fn request_refresh(&self) -> Result<(), SessionError> {
+        let _requests = self.frame_requests.lock().await;
         let Some((width, height)) = self.size() else {
             return Err(SessionError::Closed);
         };
@@ -1117,10 +1210,8 @@ async fn reader_task<R>(
     height: u16,
     name: String,
     frame_interval: std::time::Duration,
-    viewport: Arc<Mutex<Option<Rect>>>,
+    frame_requests: Arc<AsyncMutex<FrameRequests>>,
     displays: Arc<Mutex<AppleDisplayState>>,
-    local_cursor: bool,
-    quality: u8,
     apple_session: bool,
     adaptive_dct: bool,
     bytes_read: Arc<AtomicU64>,
@@ -1159,48 +1250,12 @@ async fn reader_task<R>(
     };
     let mut sequence = 0u64;
     let mut last_request: Option<std::time::Instant> = None;
-    let mut adaptive = AdaptiveQuality::new(quality, std::time::Instant::now());
-    let mut level = quality;
     let mut last_bytes = bytes_read.load(Ordering::Relaxed);
 
     loop {
         match read_message(&mut read, &mut state, &events, &mut sequence).await {
             Ok(needs_request) => {
                 if needs_request {
-                    if state.dct_failed {
-                        state.dct_failed = false;
-                        if commands
-                            .send(WriteCommand::Bytes(set_encodings(&encodings(
-                                local_cursor,
-                                level,
-                                apple_session,
-                                false,
-                            ))))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    let now = std::time::Instant::now();
-                    let total_bytes = bytes_read.load(Ordering::Relaxed);
-                    let update_bytes = total_bytes.saturating_sub(last_bytes);
-                    last_bytes = total_bytes;
-                    if let Some(observed) = adaptive.observe(now, update_bytes) {
-                        level = observed;
-                        if commands
-                            .send(WriteCommand::Bytes(set_encodings(&encodings(
-                                local_cursor,
-                                level,
-                                apple_session,
-                                state.dct_active,
-                            ))))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
                     if !frame_interval.is_zero()
                         && let Some(last) = last_request
                     {
@@ -1209,23 +1264,34 @@ async fn reader_task<R>(
                             tokio::time::sleep(frame_interval - elapsed).await;
                         }
                     }
-                    let (x, y, width, height) =
-                        match viewport.lock().ok().and_then(|viewport| *viewport) {
-                            Some(rect) => (rect.x, rect.y, rect.width, rect.height),
-                            None => {
-                                let Some((width, height)) = state.size() else {
-                                    break;
-                                };
-                                (0, 0, width, height)
-                            }
-                        };
-                    let incremental = !std::mem::take(&mut state.full_refresh);
-                    let request = framebuffer_update_request(incremental, x, y, width, height);
-                    if commands
-                        .send(WriteCommand::Bytes(request.to_vec()))
-                        .await
-                        .is_err()
+                    let mut requests = frame_requests.lock().await;
+                    let Some(size) = state.size() else { break };
+                    let now = std::time::Instant::now();
+                    let total_bytes = bytes_read.load(Ordering::Relaxed);
+                    let update_bytes = total_bytes.saturating_sub(last_bytes);
+                    last_bytes = total_bytes;
+                    let mut changed = std::mem::take(&mut state.dct_failed) && requests.offer_dct;
+                    if changed {
+                        requests.offer_dct = false;
+                    }
+                    if let Some(level) = requests
+                        .adaptive
+                        .as_mut()
+                        .and_then(|adaptive| adaptive.observe(now, update_bytes))
                     {
+                        requests.level = level;
+                        changed = true;
+                    }
+                    let mut packet = if changed {
+                        set_encodings(
+                            &requests.advertised_encodings(requests.level, requests.offer_dct),
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    let incremental = !std::mem::take(&mut state.full_refresh);
+                    packet.extend_from_slice(&requests.request(incremental, size));
+                    if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
                         break;
                     }
                     last_request = Some(std::time::Instant::now());
