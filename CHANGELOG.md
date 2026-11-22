@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 2.0.0 — 2026-11-23
+
+- Replace the C++ CLI frontend with Rust and use SDL3 for windows, input, and audio output. iPhone and iPad mirroring, control, and recording continue to use XDeviceBridge.
+- iOS is the default target. Add interactive VNC and Mac Screen Sharing sessions with `--target-type vnc` and `--target-type mac`. Use `--view-only` to disable remote input or `--probe` to verify the first frame and exit.
+- Expose in-session RFB quality changes and Apple file transfer capability checks through the Core bindings.
+- Remove `--play` for local raw HEVC playback and the CLI's FFmpeg dependency. Existing recordings can be opened in a compatible player.
+
 ## 1.4.0 — 2026-11-21
 
 - Update the embedded XDeviceBridge client to 1.7.0.

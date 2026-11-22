@@ -2,6 +2,13 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 2.0.0 — 2026-11-23
+
+- CLI 前端迁移到 Rust，使用 SDL3 处理窗口、输入和音频输出。iPhone 和 iPad 的投屏、控制和录制继续使用 XDeviceBridge。
+- 默认目标为 iOS。新增交互式 VNC 和 Mac 屏幕共享，可通过 `--target-type vnc` 和 `--target-type mac` 连接。`--view-only` 禁用远端输入，`--probe` 检查首帧后退出。
+- Core 绑定支持在 RFB 会话内切换画质，并按上传和下载方向查询 Apple 文件传输能力。
+- 移除本地裸 HEVC 回放参数 `--play` 及 CLI 的 FFmpeg 依赖。已有录制文件可用兼容的播放器打开。
+
 ## 1.4.0 — 2026-11-21
 
 - 内嵌 XDeviceBridge 客户端更新至 1.7.0。

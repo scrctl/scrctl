@@ -7,8 +7,8 @@ if(POLICY CMP0135)
 endif()
 
 project(scrctl
-        VERSION 1.4.0
-        DESCRIPTION "scrcpy for iOS: native screen mirroring and control over CoreDevice"
+        VERSION 2.0.0
+        DESCRIPTION "iOS screen mirroring and remote desktop control"
         LANGUAGES CXX)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
