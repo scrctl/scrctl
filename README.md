@@ -142,6 +142,18 @@ player once; resume playback on the device if necessary.
 The CLI language remains locale-based (`--lang auto`); `--lang en` or
 `--lang zh-CN` overrides it. English is the default documentation language.
 
+## VNC and Mac Screen Sharing
+
+```sh
+scrctl --target-type vnc HOST --port 5900
+scrctl --target-type mac HOST --view-only
+scrctl --target-type mac HOST --probe
+```
+
+The desktop window forwards mouse, wheel, and keyboard input by default.
+If authentication is required, set `SCRCTL_USERNAME` and `SCRCTL_PASSWORD`.
+`--probe` checks the first frame and exits.
+
 ## Build from source
 
 ```sh

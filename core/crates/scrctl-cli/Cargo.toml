@@ -10,7 +10,7 @@ default-run = "scrctl"
 
 [features]
 xdb = ["dep:xdb-engine", "xdb-engine/xdb", "dep:serde_json"]
-sdl3 = ["xdb", "dep:sdl3"]
+sdl3 = ["xdb", "dep:sdl3", "tokio/macros", "tokio/signal"]
 ffmpeg-next = ["dep:ffmpeg-next"]
 
 [dependencies]

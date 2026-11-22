@@ -1,15 +1,26 @@
 use clap::Parser;
 use rfb_engine::session::{Event, Session, SessionConfig};
+#[cfg(feature = "sdl3")]
+#[path = "desktop/window.rs"]
+mod window;
+
 use std::{env, error::Error, ffi::OsString, io, time::Duration};
 
 #[derive(Parser)]
-#[command(about = "Connect to a desktop, verify its first frame, and exit")]
+#[command(about = "View and control a remote desktop")]
 struct Args {
     /// Remote hostname or IP address.
     host: String,
     /// Remote RFB port.
     #[arg(long, default_value_t = 5900, value_parser = clap::value_parser!(u16).range(1..))]
     port: u16,
+    /// Verify the first framebuffer update and disconnect.
+    #[arg(long)]
+    probe: bool,
+    /// Display the remote desktop without sending input.
+    #[arg(long, alias = "no-control")]
+    #[cfg_attr(not(feature = "sdl3"), allow(dead_code))]
+    view_only: bool,
 }
 
 pub fn run(apple: bool, args: impl Iterator<Item = OsString>) -> Result<i32, Box<dyn Error>> {
@@ -19,6 +30,10 @@ pub fn run(apple: bool, args: impl Iterator<Item = OsString>) -> Result<i32, Box
         "scrctl --target-type vnc"
     };
     let args = Args::parse_from(std::iter::once(OsString::from(name)).chain(args));
+    #[cfg(not(feature = "sdl3"))]
+    if !args.probe {
+        return Err("Interactive desktop viewing requires a build with SDL3; use --probe to check the connection".into());
+    }
     let mut config = SessionConfig::new(args.host, args.port);
     config.apple_session = apple;
     config.adaptive_dct = apple;
@@ -31,12 +46,26 @@ pub fn run(apple: bool, args: impl Iterator<Item = OsString>) -> Result<i32, Box
     runtime.block_on(async {
         let session =
             tokio::time::timeout(Duration::from_secs(15), Session::connect(config)).await??;
-        let first = tokio::time::timeout(Duration::from_secs(15), first_frame(&session)).await;
+        let result = if args.probe {
+            probe(&session).await
+        } else {
+            #[cfg(feature = "sdl3")]
+            {
+                window::run(&session, args.view_only).await
+            }
+            #[cfg(not(feature = "sdl3"))]
+            unreachable!()
+        };
         session.disconnect().await;
-        let (width, height) = first??;
-        println!("First frame: {width}x{height}");
-        Ok(0)
+        result.map(|()| 0)
     })
+}
+
+async fn probe(session: &Session) -> Result<(), Box<dyn Error>> {
+    let (width, height) =
+        tokio::time::timeout(Duration::from_secs(15), first_frame(session)).await??;
+    println!("First frame: {width}x{height}");
+    Ok(())
 }
 
 async fn first_frame(session: &Session) -> io::Result<(u16, u16)> {

@@ -125,6 +125,17 @@ iPadOS 18.7.8 的 iPad mini 5 已有截图轮询与控制记录，但设备拒�
 命令行语言仍按系统区域设置选择（`--lang auto`），可用 `--lang en` 或
 `--lang zh-CN` 覆盖。文档默认使用英文。
 
+## VNC 与 Mac 屏幕共享
+
+```sh
+scrctl --target-type vnc HOST --port 5900
+scrctl --target-type mac HOST --view-only
+scrctl --target-type mac HOST --probe
+```
+
+桌面窗口默认转发鼠标、滚轮和键盘。`--view-only` 只看画面，`--probe` 检测首帧后退出。
+连接需要认证时，通过环境变量设置 `SCRCTL_USERNAME` 和 `SCRCTL_PASSWORD`。
+
 ## 从源码构建
 
 ```sh

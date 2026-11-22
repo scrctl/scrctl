@@ -10,7 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use bytes::{Buf, BytesMut};
-use rfb_codec::{CursorShape, DecodeError, Decoder, Framebuffer, Rect};
+pub use rfb_codec::Rect;
+use rfb_codec::{CursorShape, DecodeError, Decoder, Framebuffer};
 use rfb_io::{HostKeyPolicy, SshAuth, SshConfig as IoSshConfig};
 use rfb_proto::encoding::Encoding;
 use rfb_proto::messages::{
@@ -698,17 +699,30 @@ impl Session {
         steps_x: i32,
         steps_y: i32,
     ) -> Result<(), SessionError> {
+        self.send_scroll_with_buttons(0, x, y, steps_x, steps_y)
+            .await
+    }
+
+    /// Scroll without changing the state of the physical mouse buttons.
+    pub async fn send_scroll_with_buttons(
+        &self,
+        mask: u8,
+        x: u16,
+        y: u16,
+        steps_x: i32,
+        steps_y: i32,
+    ) -> Result<(), SessionError> {
         let steps_x = steps_x.clamp(-32, 32);
         let steps_y = steps_y.clamp(-32, 32);
         for _ in 0..steps_y.unsigned_abs() {
             let button = if steps_y > 0 { 1 << 4 } else { 1 << 3 };
-            self.send_pointer(button, x, y).await?;
-            self.send_pointer(0, x, y).await?;
+            self.send_pointer(mask | button, x, y).await?;
+            self.send_pointer(mask, x, y).await?;
         }
         for _ in 0..steps_x.unsigned_abs() {
             let button = if steps_x > 0 { 1 << 6 } else { 1 << 5 };
-            self.send_pointer(button, x, y).await?;
-            self.send_pointer(0, x, y).await?;
+            self.send_pointer(mask | button, x, y).await?;
+            self.send_pointer(mask, x, y).await?;
         }
         Ok(())
     }

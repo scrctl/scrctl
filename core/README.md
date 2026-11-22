@@ -27,8 +27,9 @@ The iOS crate currently has no UniFFI exports.
 ## CLI structure
 
 The `scrctl-cli` crate owns the `scrctl` executable, target dispatch,
-and SDL frontend. It uses `xdb-engine` for device sessions. Build with SDL3
-for iOS mirroring. The default Cargo build runs the RFB connection checks,
+and SDL frontend. It uses `xdb-engine` for iPhone sessions and `rfb-engine`
+for remote desktops. The CMake build enables SDL3 for both. The default Cargo
+build supports `--probe` for RFB connection checks,
 and the `scrctl-rs` first-frame probe remains a separate development command.
 
 Run the iOS session regression against the XDB loopback fixture without a phone.
@@ -50,13 +51,17 @@ scrctl --target-type vnc 192.0.2.10 --port 5900
 scrctl --target-type mac mac.example
 ```
 
-The desktop commands are connection checks for this stage. They use the Rust
-RFB engine, print the first framebuffer size, close the session, and exit.
-`mac` enables Apple Screen Sharing extensions. For hosts that require
-authentication, provide `SCRCTL_USERNAME` and `SCRCTL_PASSWORD` in the environment.
+Both desktop targets open a resizable SDL3 window with live updates and
+forward mouse, wheel, and keyboard input. Use `--view-only` (alias
+`--no-control`) to block input, or `--probe` to verify the first frame and
+disconnect without a window. `mac` enables Apple Screen Sharing extensions.
+For servers that require authentication, provide `SCRCTL_USERNAME` and
+`SCRCTL_PASSWORD` in the environment.
 
 The loopback CLI test checks RFB 3.8 and Apple RFB 3.889 negotiation, first
-frame, and clean disconnect. The CLI contract test checks the installed iOS frontend.
+frame, and clean disconnect. To also test interactive startup, resize, and
+view-only mode, run it against an installed SDL3 build with `--interactive`.
+The CLI contract test checks the installed iOS frontend.
 
 ```sh
 cargo build --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl --locked
