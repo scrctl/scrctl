@@ -11,11 +11,9 @@ mod help;
 #[cfg(feature = "sdl3")]
 mod sdl_frontend;
 
-#[cfg(any(feature = "xdb", not(feature = "sdl3")))]
+#[cfg(feature = "xdb")]
 use std::io;
 use std::{env, error::Error, ffi::OsString};
-#[cfg(not(feature = "sdl3"))]
-use std::{path::PathBuf, process::Command};
 
 fn main() {
     match launch() {
@@ -29,8 +27,7 @@ fn main() {
 
 fn launch() -> Result<i32, Box<dyn Error>> {
     let mut args = env::args_os().skip(1).peekable();
-    // Only a leading selector belongs to this launcher. All legacy arguments
-    // (including option values that look like flags) otherwise pass through.
+    // Only a leading selector is consumed here. Leave the remaining CLI arguments intact.
     let target = match args.peek().and_then(|arg| arg.to_str()) {
         Some("--target-type") => {
             args.next();
@@ -58,41 +55,12 @@ fn launch() -> Result<i32, Box<dyn Error>> {
                 if let Some(status) = device_cli::run_if_supported(&args) {
                     return Ok(status);
                 }
-                launch_legacy(args.into_iter())
-                    .map_err(|error| format!("could not launch the C++ frontend: {error}").into())
+                let _ = args;
+                Err("iOS mirroring requires a build with SDL3".into())
             }
         }
         _ => Err("expected --target-type ios, vnc, or mac".into()),
     }
-}
-
-#[cfg(not(feature = "sdl3"))]
-fn launch_legacy(args: impl Iterator<Item = OsString>) -> io::Result<i32> {
-    let frontend = match env::var_os("SCRCTL_LEGACY_EXECUTABLE") {
-        Some(path) => PathBuf::from(path),
-        None => {
-            env::current_exe()?.with_file_name(format!("scrctl-legacy{}", env::consts::EXE_SUFFIX))
-        }
-    };
-    let frontend = frontend.canonicalize()?;
-    if frontend == env::current_exe()?.canonicalize()? {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "frontend points to this launcher",
-        ));
-    }
-
-    let mut command = Command::new(frontend);
-    command.args(args);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        Err(command
-            .arg0(env::args_os().next().unwrap_or_else(|| "scrctl".into()))
-            .exec())
-    }
-    #[cfg(not(unix))]
-    command.status().map(|status| status.code().unwrap_or(1))
 }
 
 #[cfg(feature = "xdb")]

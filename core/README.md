@@ -24,15 +24,12 @@ This development CLI opens a device session and prints the first decoded BGRA
 frame's dimensions. The Rust session also exposes touch and keyboard methods.
 The iOS crate currently has no UniFFI exports.
 
-## CLI compatibility during migration
+## CLI structure
 
 The `scrctl-cli` crate owns the `scrctl` executable, target dispatch,
-and SDL frontend. It uses `xdb-engine` for device sessions. The
-SDL3 build parses and executes iOS commands directly. The build
-without SDL3 is retained as a development launcher for C++ comparisons. Set `SCRCTL_LEGACY_EXECUTABLE` to the absolute path of that
-binary, or place it beside the launcher as `scrctl-legacy` (with `.exe` on
-Windows). Keep the original frontend's runtime libraries beside it. The
-`scrctl-rs` first-frame probe remains a separate development command.
+and SDL frontend. It uses `xdb-engine` for device sessions. Build with SDL3
+for iOS mirroring. The default Cargo build runs the RFB connection checks,
+and the `scrctl-rs` first-frame probe remains a separate development command.
 
 Run the iOS session regression against the XDB loopback fixture without a phone.
 On macOS, reuse the library path from the example above:
@@ -65,7 +62,7 @@ the parity test to compare legacy output and exit codes.
 ```sh
 cargo build --manifest-path core/Cargo.toml -p scrctl-cli --bin scrctl --locked
 python3 core/tests/cli_targets.py core/target/debug/scrctl
-python3 core/tests/cli_parity.py /path/to/legacy/scrctl core/target/debug/scrctl
+SCRCTL_TEST_NATIVE_OPTIONS=1 python3 core/tests/cli_parity.py /path/to/legacy/scrctl /path/to/sdl3/scrctl
 ```
 
 ## Optional XDB GUI bindings
