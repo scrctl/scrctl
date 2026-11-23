@@ -440,6 +440,7 @@ pub struct Session {
     displays: Arc<Mutex<AppleDisplayState>>,
     input_key: Option<[u8; 16]>,
     apple_session: bool,
+    apple_keyboard: AsyncMutex<apple_input::AppleKeyboard>,
     /// The server advertised `serverCanReceivePasteboard` (feature bit 32), so
     /// clipboard text is sent as Apple message `0x1F` instead of ClientCutText.
     apple_pasteboard: bool,
@@ -656,6 +657,7 @@ impl Session {
                 .apple_features
                 .is_some_and(|features| features.has_clipboard_integration()),
             apple_client_version_sent: AtomicBool::new(apple_session),
+            apple_keyboard: AsyncMutex::default(),
             input_clock: std::time::Instant::now(),
             last_input_us: AtomicU64::new(0),
             transfer_handle: AtomicU32::new(1),
@@ -780,10 +782,26 @@ impl Session {
         if self.apple_session
             && let Some(key) = self.input_key
         {
-            let delta = self.next_input_delta_us();
-            if let Some(message) = apple_input::apple_key_message(&key, keysym, down, delta) {
-                return self.send(message.to_vec()).await;
+            let mut keyboard = self.apple_keyboard.lock().await;
+            let permit = self
+                .commands
+                .reserve()
+                .await
+                .map_err(|_| SessionError::Closed)?;
+            let mut bytes = Vec::new();
+            for (keysym, down) in keyboard.transitions(keysym, down) {
+                if let Some(message) =
+                    apple_input::apple_key_message(&key, keysym, down, self.next_input_delta_us())
+                {
+                    bytes.extend_from_slice(&message);
+                } else {
+                    bytes.extend_from_slice(&key_event(down, keysym));
+                }
             }
+            if !bytes.is_empty() {
+                permit.send(WriteCommand::Bytes(bytes));
+            }
+            return Ok(());
         }
         self.send(key_event(down, keysym).to_vec()).await
     }

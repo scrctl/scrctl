@@ -53,6 +53,7 @@
 //! `public.utf16-plain-text` flavor; the actual bytes live in the data block.
 //! URLs carry the UTF-8 URL string in the data block.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::io::{Read, Write};
 
@@ -146,6 +147,59 @@ pub fn apple_key_message(
     Some(encrypt_apple_input_message(key, &header, 0))
 }
 
+const LEFT_SHIFT: u32 = 0xffe1;
+const RIGHT_SHIFT: u32 = 0xffe2;
+
+/// Apple receives physical key codes and tracks Shift via separate events.
+#[derive(Default)]
+pub(crate) struct AppleKeyboard {
+    left_shift: bool,
+    right_shift: bool,
+    shifted_keys: HashSet<u32>,
+}
+
+impl AppleKeyboard {
+    pub(crate) fn transitions(&mut self, keysym: u32, down: bool) -> Vec<(u32, bool)> {
+        let left_was_down = self.wants_left_shift();
+        match keysym {
+            LEFT_SHIFT => self.left_shift = down,
+            RIGHT_SHIFT => self.right_shift = down,
+            _ if requires_shift(keysym) => {
+                if down {
+                    self.shifted_keys.insert(keysym);
+                } else {
+                    self.shifted_keys.remove(&keysym);
+                }
+            }
+            _ => {}
+        }
+
+        let left_is_down = self.wants_left_shift();
+        let mut events = Vec::with_capacity(2);
+        if !left_was_down && left_is_down {
+            events.push((LEFT_SHIFT, true));
+        }
+        if keysym != LEFT_SHIFT {
+            events.push((keysym, down));
+        }
+        if left_was_down && !left_is_down {
+            events.push((LEFT_SHIFT, false));
+        }
+        events
+    }
+
+    fn wants_left_shift(&self) -> bool {
+        self.left_shift || (!self.right_shift && !self.shifted_keys.is_empty())
+    }
+}
+
+fn requires_shift(keysym: u32) -> bool {
+    let Ok(ascii) = u8::try_from(keysym) else {
+        return false;
+    };
+    ascii.is_ascii_uppercase() || br#"!@#$%^&*()_+{}|:"<>?~"#.contains(&ascii)
+}
+
 /// Maps an X11 keysym to a macOS virtual key code (`kVK_*`).
 ///
 /// The mapping is layout-independent (ANSI/US positions), which is what
@@ -166,7 +220,7 @@ pub fn keysym_to_apple_keycode(keysym: u32) -> Option<u16> {
         0x23 => 20, // numbersign -> 3
         0x24 => 21, // dollar -> 4
         0x25 => 23, // percent -> 5
-        0x26 => 22, // ampersand -> 6
+        0x26 => 26, // ampersand -> 7
         0x27 => 39, // apostrophe
         0x28 => 25, // parenleft -> 9
         0x29 => 29, // parenright -> 0
@@ -591,6 +645,8 @@ mod tests {
             (b'z' as u32, 0x06),
             (b'0' as u32, 0x1d),
             (b'1' as u32, 0x12),
+            (b'&' as u32, 0x1a),
+            (b'+' as u32, 0x18),
             (0x20, 0x31),
             (XK_RETURN, 0x24),
             (XK_BACK_SPACE, 0x33),
@@ -610,6 +666,34 @@ mod tests {
             );
         }
         assert_eq!(keysym_to_apple_keycode(0x1008ff2a), None);
+    }
+
+    #[test]
+    fn releases_implicit_shift_after_a_symbol() {
+        let mut keyboard = AppleKeyboard::default();
+        for keysym in [u32::from(b'+'), u32::from(b'&')] {
+            assert_eq!(
+                keyboard.transitions(keysym, true),
+                [(LEFT_SHIFT, true), (keysym, true)]
+            );
+            assert_eq!(
+                keyboard.transitions(keysym, false),
+                [(keysym, false), (LEFT_SHIFT, false)]
+            );
+        }
+        assert_eq!(keyboard.transitions(u32::from(b'6'), true), [(54, true)]);
+    }
+
+    #[test]
+    fn does_not_release_held_shift_when_a_symbol_finishes() {
+        for shift in [LEFT_SHIFT, RIGHT_SHIFT] {
+            let mut keyboard = AppleKeyboard::default();
+            let plus = u32::from(b'+');
+            assert_eq!(keyboard.transitions(shift, true), [(shift, true)]);
+            assert_eq!(keyboard.transitions(plus, true), [(plus, true)]);
+            assert_eq!(keyboard.transitions(plus, false), [(plus, false)]);
+            assert_eq!(keyboard.transitions(shift, false), [(shift, false)]);
+        }
     }
 
     #[test]
