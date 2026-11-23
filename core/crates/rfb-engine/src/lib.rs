@@ -1,5 +1,6 @@
 //! Session engine for the RFB protocol.
 
+mod apple_cursor;
 pub mod apple_displays;
 pub mod apple_download;
 pub mod apple_file_transfer;

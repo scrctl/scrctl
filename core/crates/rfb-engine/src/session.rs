@@ -24,6 +24,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use crate::apple_cursor::AppleCursorCache;
 use crate::apple_displays;
 use crate::apple_download::{DownloadEvent as AppleDownloadEvent, DownloadTransfer};
 use crate::apple_file_transfer::{self, MAX_TRANSFER_PAYLOAD, RemoteFile};
@@ -77,6 +78,9 @@ fn encodings(local_cursor: bool, quality: u8, apple: bool, adaptive_dct: bool) -
     if local_cursor {
         ids.push(Encoding::Cursor.to_id());
         ids.push(Encoding::PointerPos.to_id());
+        if apple {
+            ids.push(Encoding::AppleCursor.to_id());
+        }
     }
     if apple {
         // Apple's display-list pseudo-encodings. The macOS server sends the
@@ -1206,6 +1210,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for CountingReader<R> {
 }
 
 struct ReaderState {
+    apple_cursors: AppleCursorCache,
     buffer: BytesMut,
     decoder: Decoder,
     framebuffer: Arc<Mutex<Framebuffer>>,
@@ -1255,6 +1260,7 @@ async fn reader_task<R>(
     }
 
     let mut state = ReaderState {
+        apple_cursors: AppleCursorCache::default(),
         buffer: BytesMut::with_capacity(READ_CHUNK),
         decoder: Decoder::new(),
         framebuffer,
@@ -1913,6 +1919,30 @@ where
                 state.dct_active = false;
                 state.dct_failed = true;
                 state.full_refresh = true;
+            }
+            continue;
+        }
+
+        if encoding == Encoding::AppleCursor {
+            let rect = Rect {
+                x,
+                y,
+                width,
+                height,
+            };
+            fill_buffer(read, &mut state.buffer, 8).await?;
+            let id = state.buffer.get_u32();
+            let compressed_len = state.buffer.get_u32() as usize;
+            if compressed_len > crate::apple_cursor::MAX_COMPRESSED_SIZE {
+                return Err(SessionError::Protocol("Mac cursor payload too large"));
+            }
+            fill_buffer(read, &mut state.buffer, compressed_len).await?;
+            let payload = state.buffer.split_to(compressed_len);
+            if let Some(shape) = state.apple_cursors.update(id, rect, &payload) {
+                events
+                    .send(Event::Cursor(shape))
+                    .await
+                    .map_err(|_| SessionError::Closed)?;
             }
             continue;
         }
