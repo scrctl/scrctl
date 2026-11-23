@@ -1359,6 +1359,41 @@ async fn unsupported_adaptive_dct_reference_falls_back_to_standard_encodings() {
 }
 
 #[tokio::test]
+async fn missing_first_adaptive_dct_frame_retries_with_standard_encodings() {
+    let (client, mut server) = duplex(64 * 1024);
+
+    let task = tokio::spawn(async move {
+        perform_apple_handshake(&mut server).await;
+        assert!(read_setup(&mut server).await.contains(&1011));
+
+        let frame = raw_update();
+        server.write_all(&frame[..2]).await.unwrap();
+        let fallback = timeout(Duration::from_secs(6), read_encodings(&mut server))
+            .await
+            .expect("the client should replace the stalled DCT encoding");
+        assert!(!fallback.contains(&1011));
+        let mut request = [0u8; 10];
+        server.read_exact(&mut request).await.unwrap();
+        assert_eq!(request, [3, 0, 0, 0, 0, 0, 0, 2, 0, 2]);
+        server.write_all(&frame[2..]).await.unwrap();
+    });
+
+    let mut config = SessionConfig::new("mock", 5900);
+    config.apple_session = true;
+    config.adaptive_dct = true;
+    let session = Session::connect_stream(client, config).await.unwrap();
+    assert!(matches!(
+        session.next_event().await,
+        Some(Event::Connected { .. })
+    ));
+    let frame = timeout(Duration::from_secs(7), session.next_event())
+        .await
+        .unwrap();
+    assert!(matches!(frame, Some(Event::Frame { sequence: 1, .. })));
+    task.await.unwrap();
+}
+
+#[tokio::test]
 async fn libvncserver_extended_desktop_size_uses_screen_bounds() {
     let (client, mut server) = duplex(64 * 1024);
 

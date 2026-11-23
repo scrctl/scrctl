@@ -1259,11 +1259,14 @@ async fn reader_task<R>(
         return;
     }
 
+    let initial_frame_deadline = tokio::time::sleep(std::time::Duration::from_secs(3));
+    tokio::pin!(initial_frame_deadline);
+    let mut initial_dct_pending = adaptive_dct;
     let mut state = ReaderState {
         apple_cursors: AppleCursorCache::default(),
         buffer: BytesMut::with_capacity(READ_CHUNK),
         decoder: Decoder::new(),
-        framebuffer,
+        framebuffer: framebuffer.clone(),
         displays,
         pixel_format: PixelFormat::bgra8888(),
         dct: None,
@@ -1281,7 +1284,40 @@ async fn reader_task<R>(
     let mut last_bytes = bytes_read.load(Ordering::Relaxed);
 
     loop {
-        match read_message(&mut read, &mut state, &events, &mut sequence).await {
+        let message = if initial_dct_pending && sequence == 0 {
+            let receive = read_message(&mut read, &mut state, &events, &mut sequence);
+            tokio::pin!(receive);
+            tokio::select! {
+                biased;
+                message = &mut receive => message,
+                _ = &mut initial_frame_deadline => {
+                    initial_dct_pending = false;
+                    {
+                        let mut requests = frame_requests.lock().await;
+                        if requests.offer_dct {
+                            // Some Macs accept Adaptive DCT but fail to encode
+                            // the initial desktop. Retry with standard encodings.
+                            requests.offer_dct = false;
+                            let size = {
+                                let framebuffer = framebuffer.lock().expect("framebuffer lock");
+                                (framebuffer.width(), framebuffer.height())
+                            };
+                            let mut packet =
+                                set_encodings(&requests.advertised_encodings(requests.level, false));
+                            packet.extend_from_slice(&requests.request(false, size));
+                            if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    // Continue the same read: it may have consumed part of a message.
+                    receive.await
+                }
+            }
+        } else {
+            read_message(&mut read, &mut state, &events, &mut sequence).await
+        };
+        match message {
             Ok(needs_request) => {
                 if needs_request {
                     if !frame_interval.is_zero()
