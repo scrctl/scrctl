@@ -230,6 +230,8 @@ pub enum FailureKind {
     SshTunnel,
     Closed,
     MacSessionChoiceRequired,
+    MacCredentialsRequired,
+    MacGuestRequestFailed,
     InvalidInput,
 }
 
@@ -240,6 +242,8 @@ impl FailureKind {
             SessionError::InvalidInput(_) => Self::InvalidInput,
             SessionError::Handshake(error) => match error {
                 HandshakeError::MacSessionChoiceRequired => Self::MacSessionChoiceRequired,
+                HandshakeError::MacCredentialsRequired => Self::MacCredentialsRequired,
+                HandshakeError::MacGuestRequestFailed => Self::MacGuestRequestFailed,
                 HandshakeError::Io(_) => Self::Network,
                 HandshakeError::Protocol(_) | HandshakeError::ServerNameTooLong(_) => {
                     Self::Protocol

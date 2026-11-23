@@ -18,6 +18,7 @@ const VNC_CHALLENGE_LEN: usize = 16;
 pub enum MacSessionChoice {
     Personal,
     Share,
+    Guest,
 }
 
 /// Settings that affect the handshake.
@@ -66,6 +67,8 @@ pub enum HandshakeError {
     MissingPassword,
     AuthenticationFailed(SecurityResult),
     MacSessionChoiceRequired,
+    MacCredentialsRequired,
+    MacGuestRequestFailed,
     ServerNameTooLong(usize),
 }
 
@@ -86,6 +89,8 @@ impl fmt::Display for HandshakeError {
             Self::MacSessionChoiceRequired => {
                 f.write_str("Choose a personal Mac session or request to share the active session")
             }
+            Self::MacCredentialsRequired => f.write_str("Choose how to connect to this Mac"),
+            Self::MacGuestRequestFailed => f.write_str("Mac guest access was not granted"),
             Self::MissingUsername => {
                 f.write_str("server requires Apple authentication but no username is configured")
             }
@@ -128,6 +133,10 @@ where
     // Apple advertises 3.889; the standard 3.8 flow remains valid until Apple
     // extensions are explicitly negotiated.
     let apple = config.apple_session && server_version == ProtocolVersion::new(3, 889);
+    let guest = config.mac_session_choice == Some(MacSessionChoice::Guest);
+    if guest && !apple {
+        return Err(HandshakeError::MacGuestRequestFailed);
+    }
     if config.mac_session_choice.is_some() && !apple {
         return Err(HandshakeError::Protocol(
             "Mac session sharing requires RFB 3.889",
@@ -143,7 +152,7 @@ where
     let security = if version == ProtocolVersion::RFB_3_3 {
         read_security_3_3(stream).await?
     } else {
-        select_security(stream, config).await?
+        select_security(stream, config, apple).await?
     };
 
     if security == SecurityType::VncAuthentication {
@@ -159,7 +168,11 @@ where
     }
 
     let mut input_key = None;
-    if matches!(security, SecurityType::Other(30) | SecurityType::Other(32)) {
+    if guest {
+        // The guest exchange uses the DH credential format with a display
+        // name and an empty password. It never receives stored credentials.
+        input_key = Some(perform_apple_dh(stream, "Scrctl", "").await?);
+    } else if security == SecurityType::Other(30) {
         let username = config
             .username
             .as_deref()
@@ -176,7 +189,11 @@ where
     if version.is_at_least(ProtocolVersion::RFB_3_8) || security != SecurityType::None {
         let result = SecurityResult::from_u32(read_u32(stream).await?);
         if result != SecurityResult::Ok {
-            return Err(HandshakeError::AuthenticationFailed(result));
+            return Err(if guest {
+                HandshakeError::MacGuestRequestFailed
+            } else {
+                HandshakeError::AuthenticationFailed(result)
+            });
         }
     }
 
@@ -218,6 +235,7 @@ async fn select_mac_session<T: AsyncRead + AsyncWrite + Unpin>(
     request[..4].copy_from_slice(&[0, 72, 0, 1]);
     // VNCKit's requestToShareExistingUserSession:NO sends action 2 ("create new").
     request[8] = match choice {
+        MacSessionChoice::Guest => return Err(HandshakeError::MacGuestRequestFailed),
         MacSessionChoice::Personal => 2,
         MacSessionChoice::Share => (offer[7] >> 1) & 1,
     };
@@ -289,7 +307,7 @@ where
         )),
         1 => Ok(SecurityType::None),
         2 => Ok(SecurityType::VncAuthentication),
-        value @ (30 | 32) => Ok(SecurityType::Other(value as u8)),
+        30 => Ok(SecurityType::Other(30)),
         other => {
             let byte = u8::try_from(other)
                 .map_err(|_| HandshakeError::Protocol("invalid security type"))?;
@@ -303,6 +321,7 @@ where
 async fn select_security<T>(
     stream: &mut T,
     config: &ClientConfig,
+    apple_session: bool,
 ) -> Result<SecurityType, HandshakeError>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -321,13 +340,22 @@ where
         .map(|&value| SecurityType::from_u8(value))
         .collect();
 
-    let apple = if offered.contains(&SecurityType::Other(30)) {
-        Some(SecurityType::Other(30))
-    } else if offered.contains(&SecurityType::Other(32)) {
-        Some(SecurityType::Other(32))
-    } else {
-        None
-    };
+    let account = SecurityType::Other(30);
+    let guest = SecurityType::Other(32);
+    if config.mac_session_choice == Some(MacSessionChoice::Guest) {
+        if !offered.contains(&guest) {
+            return Err(HandshakeError::MacGuestRequestFailed);
+        }
+        stream.write_all(&[guest.to_u8()]).await?;
+        return Ok(guest);
+    }
+    let apple = offered.contains(&account).then_some(account);
+    if apple_session
+        && config.password.as_deref().is_none_or(str::is_empty)
+        && (apple.is_some() || offered.contains(&guest))
+    {
+        return Err(HandshakeError::MacCredentialsRequired);
+    }
 
     if config.mac_session_choice.is_some() {
         if config.username.as_deref().is_none_or(str::is_empty) {
@@ -534,6 +562,72 @@ mod tests {
         let handshake = perform(&mut client, &config).await.unwrap();
         assert_eq!(handshake.version, ProtocolVersion::new(3, 889));
         task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn mac_guest_waits_for_permission_before_client_init() {
+        for granted in [false, true] {
+            let (mut client, mut server) = duplex(1024);
+            let peer = tokio::spawn(async move {
+                server.write_all(b"RFB 003.889\n").await.unwrap();
+                assert_eq!(read_version_from(&mut server).await, *b"RFB 003.889\n");
+                server.write_all(&[3, 1, 30, 32]).await.unwrap();
+                assert_eq!(read_u8_from(&mut server).await, 32);
+                let mut modulus = [0xff; 66]; // 2^521 - 1
+                modulus[0] = 1;
+                let mut public = [0; 66];
+                public[65] = 4;
+                server.write_all(&[0, 2, 0, 66]).await.unwrap();
+                server.write_all(&modulus).await.unwrap();
+                server.write_all(&public).await.unwrap();
+                server.read_exact(&mut [0; 128 + 66]).await.unwrap();
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(20), server.read_u8())
+                        .await
+                        .is_err()
+                );
+                server.write_u32(u32::from(!granted)).await.unwrap();
+                if granted {
+                    assert_eq!(read_u8_from(&mut server).await, 0xc1);
+                    server.write_all(&server_init_message()).await.unwrap();
+                } else {
+                    assert_eq!(server.read(&mut [0; 1]).await.unwrap(), 0);
+                }
+            });
+            let config = ClientConfig {
+                apple_session: true,
+                mac_session_choice: Some(MacSessionChoice::Guest),
+                ..Default::default()
+            };
+            let result = perform(&mut client, &config).await;
+            if granted {
+                assert!(result.unwrap().input_key.is_some());
+            } else {
+                assert!(matches!(result, Err(HandshakeError::MacGuestRequestFailed)));
+            }
+            drop(client);
+            peer.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn mac_without_password_prompts_before_selecting_authentication() {
+        let (mut client, mut server) = duplex(1024);
+        server
+            .write_all(b"RFB 003.889\n\x02\x1e\x20")
+            .await
+            .unwrap();
+        let config = ClientConfig {
+            apple_session: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            perform(&mut client, &config).await,
+            Err(HandshakeError::MacCredentialsRequired)
+        ));
+        drop(client);
+        assert_eq!(read_version_from(&mut server).await, *b"RFB 003.889\n");
+        assert_eq!(server.read(&mut [0; 1]).await.unwrap(), 0);
     }
 
     #[tokio::test]
@@ -774,7 +868,7 @@ mod tests {
         let task = tokio::spawn(async move {
             server.write_all(b"RFB 003.008\n").await.unwrap();
             read_version_from(&mut server).await;
-            server.write_all(&[1, 32]).await.unwrap();
+            server.write_all(&[1, 30]).await.unwrap();
         });
 
         let config = ClientConfig {
@@ -792,7 +886,7 @@ mod tests {
         let task = tokio::spawn(async move {
             server.write_all(b"RFB 003.008\n").await.unwrap();
             read_version_from(&mut server).await;
-            server.write_all(&[1, 32]).await.unwrap();
+            server.write_all(&[1, 30]).await.unwrap();
         });
 
         let config = ClientConfig {

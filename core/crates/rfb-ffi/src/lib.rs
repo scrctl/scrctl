@@ -423,6 +423,8 @@ pub enum SessionFailureKind {
     Closed,
     InvalidInput,
     MacSessionChoiceRequired,
+    MacCredentialsRequired,
+    MacGuestRequestFailed,
 }
 
 impl From<rfb_engine::session::FailureKind> for SessionFailureKind {
@@ -431,6 +433,8 @@ impl From<rfb_engine::session::FailureKind> for SessionFailureKind {
         match kind {
             Kind::InvalidInput => Self::InvalidInput,
             Kind::MacSessionChoiceRequired => Self::MacSessionChoiceRequired,
+            Kind::MacCredentialsRequired => Self::MacCredentialsRequired,
+            Kind::MacGuestRequestFailed => Self::MacGuestRequestFailed,
             Kind::Unknown => Self::Unknown,
             Kind::Network => Self::Network,
             Kind::ConnectionRefused => Self::ConnectionRefused,
@@ -517,6 +521,7 @@ pub fn validate_openvpn_profile(
 pub enum MacSessionTarget {
     Personal,
     Shared,
+    Guest,
 }
 
 /// Cancels the transport even before authentication yields a RemoteSession.
@@ -552,6 +557,12 @@ impl ConnectionAttempt {
                 match target {
                     Some(MacSessionTarget::Personal) => RemoteSession::connect_personal_mac_session(config).await,
                     Some(MacSessionTarget::Shared) => RemoteSession::connect_requesting_mac_sharing(config).await,
+                    Some(MacSessionTarget::Guest) => {
+                        let mut config: EngineConfig = config.into();
+                        config.mac_session_choice = Some(rfb_engine::handshake::MacSessionChoice::Guest);
+                        let session = Session::connect(config).await.map_err(to_failure)?;
+                        Ok(Arc::new(RemoteSession { session: Arc::new(session) }))
+                    }
                     None => RemoteSession::connect(config).await,
                 }
             } => result
