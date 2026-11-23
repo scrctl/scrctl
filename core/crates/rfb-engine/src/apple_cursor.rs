@@ -53,7 +53,7 @@ fn decode(rect: Rect, compressed: &[u8]) -> Option<CursorShape> {
         return None;
     }
     let (pixels, alpha) = decoded[..expected_len].split_at_mut(pixel_count * 4);
-    for (pixel, alpha) in pixels.chunks_exact_mut(4).zip(alpha) {
+    for (pixel, alpha) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(alpha) {
         pixel[3] = *alpha;
     }
     decoded.truncate(pixel_count * 4);
