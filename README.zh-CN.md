@@ -131,10 +131,13 @@ iPadOS 18.7.8 的 iPad mini 5 已有截图轮询与控制记录，但设备拒�
 scrctl --target-type vnc HOST --port 5900
 scrctl --target-type mac HOST --view-only
 scrctl --target-type mac HOST --probe
+scrctl --target-type mac HOST --request-permission --view-only
 ```
 
 桌面窗口默认转发鼠标、滚轮和键盘。`--view-only` 只看画面，`--probe` 检测首帧后退出。
 连接需要认证时，通过环境变量设置 `SCRCTL_USERNAME` 和 `SCRCTL_PASSWORD`。
+
+如果目标 Mac 允许访客请求，使用 `--request-permission` 请远端用户批准连接，无需提供 Mac 账号密码。CLI 最多等待两分钟完成连接和授权。
 
 ## 从源码构建
 

@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 2.1.0 — 2026-11-28
+
+- Add `--request-permission` for Mac Screen Sharing. The person at the remote Mac can approve a connection without the viewer supplying account credentials.
+- Use the dark blue dual-screen icon for CLI windows.
+- Improve Mac Screen Sharing cursor updates, keyboard symbols, and first-frame reliability.
+
 ## 2.0.0 — 2026-11-23
 
 - Replace the C++ CLI frontend with Rust and use SDL3 for windows, input, and audio output. iPhone and iPad mirroring, control, and recording continue to use XDeviceBridge.

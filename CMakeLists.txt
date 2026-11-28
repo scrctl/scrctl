@@ -7,7 +7,7 @@ if(POLICY CMP0135)
 endif()
 
 project(scrctl
-        VERSION 2.0.0
+        VERSION 2.1.0
         DESCRIPTION "iOS screen mirroring and remote desktop control"
         LANGUAGES CXX)
 

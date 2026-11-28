@@ -148,11 +148,14 @@ The CLI language remains locale-based (`--lang auto`); `--lang en` or
 scrctl --target-type vnc HOST --port 5900
 scrctl --target-type mac HOST --view-only
 scrctl --target-type mac HOST --probe
+scrctl --target-type mac HOST --request-permission --view-only
 ```
 
 The desktop window forwards mouse, wheel, and keyboard input by default.
 If authentication is required, set `SCRCTL_USERNAME` and `SCRCTL_PASSWORD`.
 `--probe` checks the first frame and exits.
+
+On Macs configured to accept permission requests, use `--request-permission` to ask the person at the remote Mac to approve the connection without providing account credentials. The CLI allows up to two minutes to connect and receive approval.
 
 ## Build from source
 

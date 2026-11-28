@@ -1,4 +1,5 @@
 use clap::Parser;
+use rfb_engine::handshake::MacSessionChoice;
 use rfb_engine::session::{Event, Session, SessionConfig};
 #[cfg(feature = "sdl3")]
 #[path = "desktop/window.rs"]
@@ -17,6 +18,9 @@ struct Args {
     /// Verify the first framebuffer update and disconnect.
     #[arg(long)]
     probe: bool,
+    /// Request approval from the person using the remote Mac.
+    #[arg(long)]
+    request_permission: bool,
     /// Display the remote desktop without sending input.
     #[arg(long, alias = "no-control")]
     #[cfg_attr(not(feature = "sdl3"), allow(dead_code))]
@@ -30,6 +34,9 @@ pub fn run(apple: bool, args: impl Iterator<Item = OsString>) -> Result<i32, Box
         "scrctl --target-type vnc"
     };
     let args = Args::parse_from(std::iter::once(OsString::from(name)).chain(args));
+    if args.request_permission && !apple {
+        return Err("--request-permission requires --target-type mac".into());
+    }
     #[cfg(not(feature = "sdl3"))]
     if !args.probe {
         return Err("Interactive desktop viewing requires a build with SDL3; use --probe to check the connection".into());
@@ -37,15 +44,29 @@ pub fn run(apple: bool, args: impl Iterator<Item = OsString>) -> Result<i32, Box
     let mut config = SessionConfig::new(args.host, args.port);
     config.apple_session = apple;
     config.adaptive_dct = apple;
-    config.username = env::var("SCRCTL_USERNAME").ok();
-    config.password = env::var("SCRCTL_PASSWORD").ok();
+    let connect_timeout = if args.request_permission {
+        config.mac_session_choice = Some(MacSessionChoice::Guest);
+        println!("Requesting screen sharing permission from the remote Mac…");
+        Duration::from_secs(120)
+    } else {
+        config.username = env::var("SCRCTL_USERNAME").ok();
+        config.password = env::var("SCRCTL_PASSWORD").ok();
+        Duration::from_secs(15)
+    };
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let session =
-            tokio::time::timeout(Duration::from_secs(15), Session::connect(config)).await??;
+        let session = tokio::time::timeout(connect_timeout, Session::connect(config))
+            .await
+            .map_err(|_| {
+                if args.request_permission {
+                    "Timed out connecting or waiting for screen sharing approval"
+                } else {
+                    "Timed out connecting to the remote desktop"
+                }
+            })??;
         let result = if args.probe {
             probe(&session).await
         } else {

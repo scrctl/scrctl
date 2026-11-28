@@ -2,6 +2,12 @@
 
 [English](CHANGELOG.md) | [简体中文](CHANGELOG.zh-CN.md)
 
+## 2.1.0 — 2026-11-28
+
+- Mac 屏幕共享新增 `--request-permission`，可请远端用户批准连接，无需提供 Mac 账号密码。
+- CLI 窗口改用深蓝双屏图标。
+- 改善 Mac 屏幕共享的光标更新、键盘符号输入和首帧稳定性。
+
 ## 2.0.0 — 2026-11-23
 
 - CLI 前端迁移到 Rust，使用 SDL3 处理窗口、输入和音频输出。iPhone 和 iPad 的投屏、控制和录制继续使用 XDeviceBridge。
