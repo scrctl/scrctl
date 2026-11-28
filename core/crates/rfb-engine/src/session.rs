@@ -34,6 +34,7 @@ use crate::quality::AdaptiveQuality;
 
 const EVENT_CHANNEL_CAPACITY: usize = 32;
 const COMMAND_CHANNEL_CAPACITY: usize = 64;
+const APPLE_UPDATE_REARM_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 const READ_CHUNK: usize = 64 * 1024;
 const MAX_CUT_TEXT_LEN: usize = 16 * 1024 * 1024;
 
@@ -418,6 +419,7 @@ struct FrameRequests {
     local_cursor: bool,
     apple_session: bool,
     offer_dct: bool,
+    apple_auto_update: bool,
 }
 
 impl FrameRequests {
@@ -425,18 +427,35 @@ impl FrameRequests {
         encodings(self.local_cursor, level, self.apple_session, offer_dct)
     }
 
-    fn request(&self, incremental: bool, (width, height): (u16, u16)) -> [u8; 10] {
-        let rect = self
-            .viewport
+    fn area(&self, (width, height): (u16, u16)) -> Rect {
+        self.viewport
             .and_then(|rect| clamp_rect(rect, width, height))
             .unwrap_or(Rect {
                 x: 0,
                 y: 0,
                 width,
                 height,
-            });
+            })
+    }
+
+    fn request(&self, incremental: bool, size: (u16, u16)) -> [u8; 10] {
+        let rect = self.area(size);
         framebuffer_update_request(incremental, rect.x, rect.y, rect.width, rect.height)
     }
+
+    fn apple_auto_request(&self, size: (u16, u16)) -> [u8; 16] {
+        apple_auto_update_request(self.area(size))
+    }
+}
+
+fn apple_auto_update_request(rect: Rect) -> [u8; 16] {
+    // Apple AutoFrameBufferUpdate, version 1, enabled (selector zero).
+    let mut packet = [9, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    packet[8..10].copy_from_slice(&rect.x.to_be_bytes());
+    packet[10..12].copy_from_slice(&rect.y.to_be_bytes());
+    packet[12..14].copy_from_slice(&rect.width.to_be_bytes());
+    packet[14..16].copy_from_slice(&rect.height.to_be_bytes());
+    packet
 }
 
 /// A connected RFB session.
@@ -584,6 +603,7 @@ impl Session {
             local_cursor: config.local_cursor && apple_session,
             apple_session,
             offer_dct: config.adaptive_dct && apple_session,
+            apple_auto_update: false,
         }));
         let displays = Arc::new(Mutex::new(AppleDisplayState::default()));
         let downloads = Arc::new(Mutex::new(HashMap::new()));
@@ -921,10 +941,12 @@ impl Session {
             width,
             height,
         });
-        self.send(
-            framebuffer_update_request(false, area.x, area.y, area.width, area.height).to_vec(),
-        )
-        .await?;
+        let mut packet =
+            framebuffer_update_request(false, area.x, area.y, area.width, area.height).to_vec();
+        if requests.apple_auto_update {
+            packet.extend_from_slice(&apple_auto_update_request(area));
+        }
+        self.send(packet).await?;
         requests.viewport = rect;
         Ok(())
     }
@@ -1222,6 +1244,7 @@ struct ReaderState {
     full_refresh: bool,
     refresh_on_first_layout: bool,
     refresh_on_first_tables: bool,
+    apple_layout_received: bool,
     downloads: Arc<Mutex<HashMap<u32, DownloadTransfer>>>,
     commands: mpsc::Sender<WriteCommand>,
     clipboard: Arc<Mutex<ClipboardState>>,
@@ -1275,6 +1298,7 @@ async fn reader_task<R>(
         full_refresh: false,
         refresh_on_first_layout: apple_session,
         refresh_on_first_tables: adaptive_dct,
+        apple_layout_received: false,
         downloads,
         commands: commands.clone(),
         clipboard,
@@ -1283,20 +1307,26 @@ async fn reader_task<R>(
     let mut last_request: Option<std::time::Instant> = None;
     let mut last_bytes = bytes_read.load(Ordering::Relaxed);
 
-    loop {
-        let message = if initial_dct_pending && sequence == 0 {
+    let auto_update_deadline = tokio::time::sleep(APPLE_UPDATE_REARM_INTERVAL);
+    tokio::pin!(auto_update_deadline);
+    let mut auto_update_armed = false;
+
+    'read: loop {
+        let message = {
+            let mut waiting_for_dct = initial_dct_pending && sequence == 0;
             let receive = read_message(&mut read, &mut state, &events, &mut sequence);
             tokio::pin!(receive);
-            tokio::select! {
-                biased;
-                message = &mut receive => message,
-                _ = &mut initial_frame_deadline => {
-                    initial_dct_pending = false;
-                    {
+            // Keep polling the same read after a timer fires. It may have
+            // already consumed part of an update.
+            loop {
+                tokio::select! {
+                    message = &mut receive => break message,
+                    _ = &mut initial_frame_deadline, if waiting_for_dct => {
+                        waiting_for_dct = false;
+                        initial_dct_pending = false;
                         let mut requests = frame_requests.lock().await;
                         if requests.offer_dct {
-                            // Some Macs accept Adaptive DCT but fail to encode
-                            // the initial desktop. Retry with standard encodings.
+                            // Some Macs accept Adaptive DCT but fail to encode initial pixels.
                             requests.offer_dct = false;
                             let size = {
                                 let framebuffer = framebuffer.lock().expect("framebuffer lock");
@@ -1306,21 +1336,32 @@ async fn reader_task<R>(
                                 set_encodings(&requests.advertised_encodings(requests.level, false));
                             packet.extend_from_slice(&requests.request(false, size));
                             if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
-                                break;
+                                break 'read;
                             }
                         }
                     }
-                    // Continue the same read: it may have consumed part of a message.
-                    receive.await
+                    _ = &mut auto_update_deadline, if auto_update_armed => {
+                        let requests = frame_requests.lock().await;
+                        let size = {
+                            let framebuffer = framebuffer.lock().expect("framebuffer lock");
+                            (framebuffer.width(), framebuffer.height())
+                        };
+                        let packet = requests.apple_auto_request(size).to_vec();
+                        if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
+                            break 'read;
+                        }
+                        auto_update_deadline.as_mut().reset(
+                            tokio::time::Instant::now() + APPLE_UPDATE_REARM_INTERVAL,
+                        );
+                    }
                 }
             }
-        } else {
-            read_message(&mut read, &mut state, &events, &mut sequence).await
         };
         match message {
             Ok(needs_request) => {
                 if needs_request {
-                    if !frame_interval.is_zero()
+                    if !auto_update_armed
+                        && !frame_interval.is_zero()
                         && let Some(last) = last_request
                     {
                         let elapsed = last.elapsed();
@@ -1353,12 +1394,32 @@ async fn reader_task<R>(
                     } else {
                         Vec::new()
                     };
-                    let incremental = !std::mem::take(&mut state.full_refresh);
-                    packet.extend_from_slice(&requests.request(incremental, size));
-                    if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
-                        break;
+                    let apple_layout = std::mem::take(&mut state.apple_layout_received);
+                    // Bootstrap with ordinary requests. Once pixels arrive,
+                    // request a complete image in case the first update was
+                    // partial, then enable server-driven cursor and frames.
+                    let start_auto = !auto_update_armed && requests.local_cursor && sequence > 0;
+                    let arm_auto = start_auto || (auto_update_armed && (apple_layout || changed));
+                    let full_refresh = std::mem::take(&mut state.full_refresh) || arm_auto;
+                    if full_refresh || !auto_update_armed {
+                        packet.extend_from_slice(&requests.request(!full_refresh, size));
                     }
-                    last_request = Some(std::time::Instant::now());
+                    if arm_auto {
+                        packet.extend_from_slice(&requests.apple_auto_request(size));
+                    }
+                    if !packet.is_empty() {
+                        if commands.send(WriteCommand::Bytes(packet)).await.is_err() {
+                            break;
+                        }
+                        last_request = Some(std::time::Instant::now());
+                    }
+                    if arm_auto {
+                        auto_update_armed = true;
+                        requests.apple_auto_update = true;
+                        auto_update_deadline
+                            .as_mut()
+                            .reset(tokio::time::Instant::now() + APPLE_UPDATE_REARM_INTERVAL);
+                    }
                 }
             }
             Err(SessionError::Closed) => {
@@ -1786,6 +1847,7 @@ where
             let payload = state.buffer[..payload_len].to_vec();
             state.buffer.advance(payload_len);
             if let Ok(info) = apple_displays::parse_apple_desktop_info(&payload) {
+                state.apple_layout_received = true;
                 {
                     let mut framebuffer = state
                         .framebuffer
@@ -1821,6 +1883,7 @@ where
             let payload = state.buffer[..payload_len].to_vec();
             state.buffer.advance(payload_len);
             if let Ok(info) = apple_displays::parse_apple_desktop_info2(&payload) {
+                state.apple_layout_received = true;
                 {
                     let mut framebuffer = state
                         .framebuffer
@@ -2000,15 +2063,9 @@ where
         }
 
         if encoding == Encoding::PointerPos {
-            fill_buffer(read, &mut state.buffer, 4).await?;
-            let pointer_x = u16::from_be_bytes([state.buffer[0], state.buffer[1]]);
-            let pointer_y = u16::from_be_bytes([state.buffer[2], state.buffer[3]]);
-            state.buffer.advance(4);
+            // PointerPos stores coordinates in the rectangle header and has no payload.
             events
-                .send(Event::PointerPosition {
-                    x: pointer_x,
-                    y: pointer_y,
-                })
+                .send(Event::PointerPosition { x, y })
                 .await
                 .map_err(|_| SessionError::Closed)?;
             continue;

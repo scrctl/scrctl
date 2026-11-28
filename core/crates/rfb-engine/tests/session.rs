@@ -155,7 +155,6 @@ fn cursor_update() -> Vec<u8> {
     update.extend_from_slice(&0u16.to_be_bytes());
     update.extend_from_slice(&0u16.to_be_bytes());
     update.extend_from_slice(&(-232i32).to_be_bytes());
-    update.extend_from_slice(&[0, 5, 0, 6]);
     update
 }
 
@@ -1231,6 +1230,106 @@ async fn standalone_dct_tables_request_first_pixels_only_once() {
         .unwrap();
 }
 
+fn apple_layout_update() -> Vec<u8> {
+    let mut update = vec![0, 0, 0, 1];
+    update.extend_from_slice(&[0; 8]);
+    update.extend_from_slice(&1105i32.to_be_bytes());
+    update.extend_from_slice(&76u16.to_be_bytes());
+    update.extend_from_slice(&[0, 0, 0, 2, 0, 2, 0, 2, 0, 2]);
+    update.extend_from_slice(&[0; 8]);
+    update.extend_from_slice(&1u16.to_be_bytes());
+    update.extend_from_slice(&1f64.to_be_bytes());
+    update.extend_from_slice(&1f64.to_be_bytes());
+    update.extend_from_slice(&1u32.to_be_bytes());
+    for _ in 0..2 {
+        update.extend_from_slice(&[0, 0, 0, 0, 0, 2, 0, 2]);
+    }
+    update.extend_from_slice(&[0; 4]);
+    update.extend_from_slice(&rfb_proto::pixel_format::PixelFormat::bgra8888().encode());
+    update
+}
+
+fn apple_cursor_update(id: u32, hotspot_x: u16, pixels: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut update = vec![0, 0, 0, 1];
+    update.extend(hotspot_x.to_be_bytes());
+    update.extend_from_slice(&[0, 0]);
+    let side: u16 = if pixels.is_empty() { 0 } else { 2 };
+    update.extend(side.to_be_bytes());
+    update.extend(side.to_be_bytes());
+    update.extend(1104i32.to_be_bytes());
+    update.extend(id.to_be_bytes());
+    let compressed = if pixels.is_empty() {
+        Vec::new()
+    } else {
+        let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(pixels).unwrap();
+        encoder.finish().unwrap()
+    };
+    update.extend((compressed.len() as u32).to_be_bytes());
+    update.extend(compressed);
+    update
+}
+
+#[tokio::test]
+async fn apple_cursor_updates_continue_after_unchanged_layout() {
+    timeout(Duration::from_secs(3), async {
+        let (client, mut server) = duplex(4096);
+        let peer = tokio::spawn(async move {
+            perform_apple_handshake(&mut server).await;
+            assert!(read_setup(&mut server).await.contains(&1104));
+
+            // First full image completes the polled bootstrap.
+            server.write_all(&raw_update()).await.unwrap();
+            let mut request = [0; 10];
+            let full = [3, 0, 0, 0, 0, 0, 0, 2, 0, 2];
+            server.read_exact(&mut request).await.unwrap();
+            assert_eq!(request, full);
+            let mut auto = [0; 16];
+            let expected = [9, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2];
+            server.read_exact(&mut auto).await.unwrap();
+            assert_eq!(auto, expected);
+
+            server
+                .write_all(&apple_cursor_update(1, 0, &[255; 20]))
+                .await
+                .unwrap();
+            server
+                .write_all(&apple_cursor_update(2, 1, &[127; 20]))
+                .await
+                .unwrap();
+            // A session transition may report the very same geometry.
+            server.write_all(&apple_layout_update()).await.unwrap();
+            server.read_exact(&mut request).await.unwrap();
+            assert_eq!(request, full);
+            server.read_exact(&mut auto).await.unwrap();
+            assert_eq!(auto, expected);
+            server
+                .write_all(&apple_cursor_update(1, 0, &[]))
+                .await
+                .unwrap();
+        });
+
+        let mut config = SessionConfig::new("mock", 5900);
+        config.apple_session = true;
+        config.local_cursor = true;
+        let session = Session::connect_stream(client, config).await.unwrap();
+        let mut hotspots = Vec::new();
+        while hotspots.len() < 3 {
+            match session.next_event().await.unwrap() {
+                Event::Cursor(cursor) => hotspots.push(cursor.hotspot_x),
+                Event::Disconnected { reason, .. } => panic!("{reason}"),
+                _ => {}
+            }
+        }
+        assert_eq!(hotspots, [0, 1, 0]);
+        peer.await.unwrap();
+    })
+    .await
+    .unwrap();
+}
+
 #[tokio::test]
 async fn apple_layout_before_pixels_requests_one_full_refresh() {
     // Force the combined rectangle payload to span multiple reads.
@@ -1240,21 +1339,8 @@ async fn apple_layout_before_pixels_requests_one_full_refresh() {
         read_setup(&mut server).await;
 
         // DisplayInfo2 and a DCT quantisation table in one update.
-        let mut update = vec![0, 0, 0, 2];
-        update.extend_from_slice(&[0; 8]);
-        update.extend_from_slice(&1105i32.to_be_bytes());
-        update.extend_from_slice(&76u16.to_be_bytes());
-        update.extend_from_slice(&[0, 0, 0, 2, 0, 2, 0, 2, 0, 2]);
-        update.extend_from_slice(&[0; 8]);
-        update.extend_from_slice(&1u16.to_be_bytes());
-        update.extend_from_slice(&1f64.to_be_bytes());
-        update.extend_from_slice(&1f64.to_be_bytes());
-        update.extend_from_slice(&1u32.to_be_bytes());
-        for _ in 0..2 {
-            update.extend_from_slice(&[0, 0, 0, 0, 0, 2, 0, 2]);
-        }
-        update.extend_from_slice(&[0; 4]);
-        update.extend_from_slice(&rfb_proto::pixel_format::PixelFormat::bgra8888().encode());
+        let mut update = apple_layout_update();
+        update[3] = 2;
         update.extend(dct_table_rectangle());
         let mut request = [0; 10];
         for incremental in [0, 1] {
